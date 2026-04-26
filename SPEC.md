@@ -181,7 +181,7 @@ Example:
 
 `txpt shims protect`, `txpt shims unprotect`, `txpt shims ignore`, `txpt shims unignore`, and `txpt shims edit` update this policy. `txpt shims edit` requires an active session, opens `policy.json` with `$EDITOR`, and falls back to `vim`, `vi`, then `nano` when `$EDITOR` is unset. After editing, txpt validates the JSON and regenerates shims. If the edited JSON is invalid, txpt warns and leaves the existing shims unchanged. Shims read the policy each time they run, so changes apply without restarting the shell.
 
-`txpt session` protects selected external commands. It does not make shell builtins, redirections, pipelines, aliases, or functions transactional.
+A txpt session protects selected external commands. It does not make shell builtins, redirections, pipelines, aliases, or functions transactional.
 
 Protected Git cleanup commands may modify `.git` state. txpt can restore protected workspace files, but it does not roll back the Git index, reflog, repository metadata, or other `.git` contents.
 
