@@ -60,6 +60,24 @@ fn run_with_display_command(root: &Path, display_json: &str, script: &str) -> St
     String::from_utf8(output).unwrap()
 }
 
+fn strip_ansi(text: &str) -> String {
+    let mut stripped = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            stripped.push(ch);
+        }
+    }
+    stripped
+}
+
 fn run_interactive_txpt_session(
     root: &Path,
     extra_path: Option<&Path>,
@@ -242,7 +260,7 @@ fn protected_shell_session_e2e_wraps_commands_and_undoes_points() {
     );
     assert!(!dir.path().join("node_modules").exists());
     assert!(!dir.path().join("package.json").exists());
-    let output = String::from_utf8_lossy(&output.stdout);
+    let output = strip_ansi(&String::from_utf8_lossy(&output.stdout));
     assert!(
         output.contains("command:\r\n  rm doomed.txt")
             || output.contains("command:\n  rm doomed.txt")
@@ -279,7 +297,7 @@ fn shell_startup_commands_do_not_create_points() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let output = String::from_utf8_lossy(&output.stdout);
+    let output = strip_ansi(&String::from_utf8_lossy(&output.stdout));
     assert!(output.contains("startup-ready"));
     assert!(
         output.contains("command:\r\n  mkdir user-created")
