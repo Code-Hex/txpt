@@ -181,7 +181,7 @@ Example:
 
 `txpt shims protect`, `txpt shims unprotect`, `txpt shims ignore`, `txpt shims unignore`, and `txpt shims edit` update this policy. `txpt shims edit` requires an active session, copies `policy.json` to a temporary editable file, opens that file with `$EDITOR`, and falls back to `vim`, `vi`, then `nano` when `$EDITOR` is unset. After editing, txpt validates the JSON. If it is valid, txpt atomically replaces `policy.json` and regenerates shims. If it is invalid, txpt warns, leaves the live policy unchanged, and prints the temporary file path. Shims read the policy each time they run, so changes apply without restarting the shell.
 
-A txpt session protects selected external commands. It does not make shell builtins, redirections, pipelines, aliases, or functions transactional.
+A txpt session protects selected external commands and best-effort wrapped zsh/bash functions. It does not make arbitrary shell builtins, redirections, pipelines, aliases, or unrelated shell functions transactional.
 
 Protected Git cleanup and index commands may modify `.git` state. txpt can restore protected workspace files, but it does not roll back the Git index, reflog, repository metadata, or other `.git` contents. The run receipt warns for default-guarded Git commands that are known to touch this boundary, including `git clean`, `git reset --hard`, `git restore --staged`, `git rm --cached`, and `git stash pop/apply`.
 
