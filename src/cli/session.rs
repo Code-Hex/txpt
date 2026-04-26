@@ -29,6 +29,7 @@ pub(crate) fn start() -> Result<i32> {
     shims::write_shims(&bin_dir, &policy)?;
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
+    let shell_name = shell_name(&shell).to_owned();
     let new_path = session_path(&bin_dir)?;
     prepare_shell_startup(&session_dir, &shell)?;
     eprintln!("txpt session started");
@@ -44,6 +45,14 @@ pub(crate) fn start() -> Result<i32> {
         .current_dir(env::current_dir()?)
         .env("PATH", new_path)
         .env("TXPT_ACTIVE", "1")
+        .env(
+            "TXPT_READY",
+            if matches!(shell_name.as_str(), "zsh" | "bash") {
+                "0"
+            } else {
+                "1"
+            },
+        )
         .env("TXPT_SESSION_ID", &id)
         .env("TXPT_SESSION_DIR", &session_dir)
         .stdin(Stdio::inherit())
@@ -103,10 +112,7 @@ pub(crate) fn dashboard() -> Result<i32> {
 }
 
 fn prepare_shell_startup(session_dir: &Path, shell: &str) -> Result<()> {
-    let shell_name = Path::new(shell)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
+    let shell_name = shell_name(shell);
     let exe = shims::shell_quote(&env::current_exe()?.display().to_string());
     let zsh_repath = "\
 __txpt_exe='__TXPT_EXE__'
@@ -236,7 +242,7 @@ esac
             fs::write(
                 session_dir.join(".zshrc"),
                 format!(
-                    "[ -f \"$HOME/.zshrc\" ] && . \"$HOME/.zshrc\"\n{}export PS1=\"(txpt) $PS1\"\n",
+                    "[ -f \"$HOME/.zshrc\" ] && . \"$HOME/.zshrc\"\n{}export TXPT_READY=1\nexport PS1=\"(txpt) $PS1\"\n",
                     zsh_repath.replace("__TXPT_EXE__", &exe)
                 ),
             )?;
@@ -245,7 +251,7 @@ esac
             fs::write(
                 session_dir.join(".bashrc"),
                 format!(
-                    "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"\n{}export PS1=\"(txpt) $PS1\"\n",
+                    "[ -f \"$HOME/.bashrc\" ] && . \"$HOME/.bashrc\"\n{}export TXPT_READY=1\nexport PS1=\"(txpt) $PS1\"\n",
                     bash_repath.replace("__TXPT_EXE__", &exe)
                 ),
             )?;
@@ -256,10 +262,7 @@ esac
 }
 
 fn configure_interactive_shell(command: &mut Command, session_dir: &Path, shell: &str) {
-    let shell_name = Path::new(shell)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
+    let shell_name = shell_name(shell);
     match shell_name {
         "zsh" => {
             command.arg("-i").env("ZDOTDIR", session_dir);
@@ -274,6 +277,13 @@ fn configure_interactive_shell(command: &mut Command, session_dir: &Path, shell:
             command.arg("-i");
         }
     };
+}
+
+fn shell_name(shell: &str) -> &str {
+    Path::new(shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
 }
 
 fn path_starts_with(bin_dir: &Path) -> bool {

@@ -74,8 +74,8 @@ pub fn tx_paths(root: &Path, id: &str) -> Result<TxPaths> {
 }
 
 pub fn latest_tx_id(root: &Path) -> Result<String> {
-    let Some(id) = list_tx_ids(root)?.into_iter().next() else {
-        bail!("no transactions recorded");
+    let Some(id) = list_active_tx_ids(root)?.into_iter().next() else {
+        bail!("no active transaction points recorded");
     };
     Ok(id)
 }
@@ -99,14 +99,27 @@ pub fn list_tx_ids(root: &Path) -> Result<Vec<String>> {
         .collect())
 }
 
+pub fn list_active_tx_ids(root: &Path) -> Result<Vec<String>> {
+    Ok(list_tx_ids(root)?
+        .into_iter()
+        .filter(|id| {
+            !state_dir(root)
+                .join("tx")
+                .join(id)
+                .join("rollback.json")
+                .exists()
+        })
+        .collect())
+}
+
 pub fn resolve_tx_id(root: &Path, selector: Option<&str>) -> Result<String> {
-    let ids = list_tx_ids(root)?;
     match selector {
-        None | Some("@last") => ids
+        None | Some("@last") => list_active_tx_ids(root)?
             .first()
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("no transactions recorded")),
+            .ok_or_else(|| anyhow::anyhow!("no active transaction points recorded")),
         Some(value) if value.starts_with('@') => {
+            let ids = list_active_tx_ids(root)?;
             let index = value
                 .trim_start_matches('@')
                 .parse::<usize>()
@@ -130,6 +143,16 @@ pub fn existing_tx_paths(root: &Path, id: Option<&str>) -> Result<TxPaths> {
         state_dir: state,
         tx_dir,
     })
+}
+
+pub fn remove_tx_dir(paths: &TxPaths) -> Result<()> {
+    let tx_root = paths.state_dir.join("tx").canonicalize()?;
+    let tx_dir = paths.tx_dir.canonicalize()?;
+    if tx_dir.parent() != Some(tx_root.as_path()) {
+        bail!("refusing to remove transaction directory outside tx root");
+    }
+    fs::remove_dir_all(tx_dir)?;
+    Ok(())
 }
 
 pub fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()> {

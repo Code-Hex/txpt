@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
-use std::io::Write;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
@@ -74,15 +73,6 @@ pub struct RollbackResult {
     pub removed: usize,
     pub conflicts: usize,
     pub dry_run: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct RollbackRecord {
-    status: String,
-    restored: usize,
-    removed: usize,
-    conflicts: usize,
-    dry_run: bool,
 }
 
 pub fn plan(root: &Path, paths: &TxPaths) -> RollbackPlan {
@@ -182,23 +172,8 @@ pub fn apply_plan(
         }
     }
 
-    let mut log = File::create(paths.tx_dir.join("rollback.log"))?;
-    writeln!(
-        log,
-        "restored={} removed={} conflicts={} dry_run={}",
-        result.restored, result.removed, result.conflicts, result.dry_run
-    )?;
     if !dry_run {
-        crate::storage::write_json(
-            &paths.tx_dir.join("rollback.json"),
-            &RollbackRecord {
-                status: "applied".to_owned(),
-                restored: result.restored,
-                removed: result.removed,
-                conflicts: result.conflicts,
-                dry_run,
-            },
-        )?;
+        crate::storage::remove_tx_dir(paths)?;
     }
     Ok(result)
 }

@@ -61,7 +61,7 @@ pub(crate) fn list(args: Vec<String>) -> Result<i32> {
         bail!("unknown list option");
     }
     let root = root::detect(None)?;
-    let ids = match storage::list_tx_ids(&root) {
+    let ids = match storage::list_active_tx_ids(&root) {
         Ok(ids) => ids,
         Err(_) => return Ok(0),
     };

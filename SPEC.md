@@ -88,6 +88,8 @@ txpt is not a sandbox. It protects normal interactive command use through shell 
 
 For zsh and bash, txpt installs best-effort session-local startup hooks that keep the shim directory at the front of `PATH` before each prompt and command execution. This is necessary because user shell startup files, version managers, and package managers may rewrite `PATH` after the shell starts. Hook installation and shell function wrapping are not a full shell compatibility guarantee.
 
+Commands run by shell startup files before the txpt prompt is ready are pass-through and do not create transaction points. A txpt session protects commands the user runs after startup, not package-manager or completion-manager maintenance performed while the shell is initializing.
+
 If the user's zsh or bash already defines a function with the same name as a txpt shim, txpt makes a best-effort attempt to preserve that function inside the session by moving it to `__txpt_original_<cmd>` and installing a txpt wrapper function in its place. Wrapped invocations create a transaction point and then call the original function. Pass-through invocations call the original function directly. Same-name aliases are removed inside the session because they cannot be safely invoked from txpt's subprocess boundary.
 
 Function wrapping does not run the command inside an extra interactive shell. The wrapper asks txpt to create the before snapshot, invokes the original function in the current shell, then asks txpt to record the after state. This keeps shell-provided behavior such as security wrappers while avoiding nested shell execution for every protected command.
@@ -254,8 +256,6 @@ Transactions are stored as:
     stdout.log
     stderr.log
     diff.patch
-    rollback.log
-    rollback.json
   tmp/
   locks/
   conflicts/
@@ -316,11 +316,13 @@ Rollback behavior:
 
 Symlinks are restored as symlinks. txpt never follows symlinks during rollback.
 
+After a non-dry-run rollback succeeds, txpt removes that transaction directory from `.txpt/tx/`. There is no redo operation, so reverted points are popped from the default stack instead of remaining visible in `txpt list` or selector aliases such as `@last`.
+
 `--snapshot off` records the point without preimage snapshots. Such points use `record_only` rollback guarantee, appear as `record-only` in human output, and `txpt undo` refuses them with exit code 81.
 
 ## Diff And Readiness UI
 
-`txpt list` and `txpt ls` show rollback readiness by default:
+`txpt list` and `txpt ls` show rollback readiness for active points by default:
 
 ```text
 ID        AGE        STATE      EXIT  CHANGES      COMMAND

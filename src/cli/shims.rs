@@ -159,8 +159,17 @@ pub(crate) fn shim_exec(args: Vec<String>) -> Result<i32> {
         bail!("shim-exec requires a command");
     };
     let rest = args[1..].to_vec();
-    let policy = active_policy()?;
     let real = find_real_command(command)?;
+    if env::var_os("TXPT_READY").as_deref() == Some(std::ffi::OsStr::new("0")) {
+        let status = Command::new(&real)
+            .args(rest)
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        return Ok(status.code().unwrap_or(1));
+    }
+    let policy = active_policy()?;
     let mut real_argv = vec![real.display().to_string()];
     real_argv.extend(rest.clone());
     if should_wrap(&policy, command, &rest) {
@@ -193,6 +202,9 @@ pub(crate) fn shim_should_wrap(args: Vec<String>) -> Result<i32> {
     let Some(command) = args.first() else {
         bail!("shim-should-wrap requires a command");
     };
+    if env::var_os("TXPT_READY").as_deref() == Some(std::ffi::OsStr::new("0")) {
+        return Ok(1);
+    }
     let policy = active_policy()?;
     Ok(if should_wrap(&policy, command, &args[1..]) {
         0

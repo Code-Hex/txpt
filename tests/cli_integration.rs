@@ -40,6 +40,16 @@ fn run_interactive_txpt_session(
     extra_path: Option<&Path>,
     input: &str,
 ) -> std::process::Output {
+    run_interactive_txpt_session_with_env(root, "/bin/sh", extra_path, &[], input)
+}
+
+fn run_interactive_txpt_session_with_env(
+    root: &Path,
+    shell: &str,
+    extra_path: Option<&Path>,
+    extra_env: &[(&str, &str)],
+    input: &str,
+) -> std::process::Output {
     let txpt_bin = assert_cmd::cargo::cargo_bin("txpt");
     let mut master = 0;
     let mut slave = 0;
@@ -75,7 +85,10 @@ fn run_interactive_txpt_session(
 
     let slave_file = unsafe { fs::File::from_raw_fd(slave) };
     let mut command = StdCommand::new(txpt_bin);
-    command.current_dir(root).env("SHELL", "/bin/sh");
+    command.current_dir(root).env("SHELL", shell);
+    for (key, value) in extra_env {
+        command.env(key, value);
+    }
     if let Some(extra_path) = extra_path {
         command.env(
             "PATH",
@@ -204,17 +217,52 @@ fn protected_shell_session_e2e_wraps_commands_and_undoes_points() {
     );
     assert!(!dir.path().join("node_modules").exists());
     assert!(!dir.path().join("package.json").exists());
-    let ids = tx_ids(dir.path());
-    assert!(ids.len() >= 2);
-    let commands = ids
-        .into_iter()
-        .map(|id| {
-            fs::read_to_string(dir.path().join(".txpt/tx").join(id).join("command.json")).unwrap()
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(commands.contains(r#""npm""#));
-    assert!(commands.contains(r#""rm""#));
+    let output = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.contains("command:\r\n  rm doomed.txt")
+            || output.contains("command:\n  rm doomed.txt")
+    );
+    assert!(
+        output.contains("command:\r\n  npm install zod")
+            || output.contains("command:\n  npm install zod")
+    );
+    assert!(tx_ids(dir.path()).is_empty());
+}
+
+#[test]
+fn shell_startup_commands_do_not_create_points() {
+    let dir = TempDir::new().unwrap();
+    let home = dir.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    fs::write(
+        home.join(".bashrc"),
+        "mkdir -p startup-created\nprintf startup-ready\\n\n",
+    )
+    .unwrap();
+
+    let output = run_interactive_txpt_session_with_env(
+        dir.path(),
+        "/bin/bash",
+        None,
+        &[("HOME", home.to_str().unwrap())],
+        "mkdir user-created\ntxpt undo\nexit\n",
+    );
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output = String::from_utf8_lossy(&output.stdout);
+    assert!(output.contains("startup-ready"));
+    assert!(
+        output.contains("command:\r\n  mkdir user-created")
+            || output.contains("command:\n  mkdir user-created")
+    );
+    assert!(dir.path().join("startup-created").exists());
+    assert!(!dir.path().join("user-created").exists());
+    assert!(tx_ids(dir.path()).is_empty());
 }
 
 #[test]
@@ -1103,6 +1151,54 @@ fn list_show_and_diff_surface_rollback_readiness() {
         .stdout(predicate::str::contains("--- before/package.json"))
         .stdout(predicate::str::contains("+++ after/package.json"))
         .stdout(predicate::str::contains("@@"));
+}
+
+#[test]
+fn reverted_points_are_popped_from_default_stack() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("first.txt"), "before\n").unwrap();
+    run_tx(dir.path(), "printf first-after > first.txt").success();
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    run_tx(dir.path(), "printf second > second.txt").success();
+
+    let mut undo_latest = txpt();
+    undo_latest
+        .current_dir(dir.path())
+        .arg("undo")
+        .assert()
+        .success();
+    assert_eq!(tx_ids(dir.path()).len(), 1);
+
+    let mut list = txpt();
+    list.current_dir(dir.path())
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("@last"))
+        .stdout(predicate::str::contains("first.txt"))
+        .stdout(predicate::str::contains("second.txt").not())
+        .stdout(predicate::str::contains("reverted").not());
+
+    let mut show = txpt();
+    show.current_dir(dir.path())
+        .args(["show", "@last"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("first.txt"))
+        .stdout(predicate::str::contains("state: undoable"));
+
+    let mut undo_next = txpt();
+    undo_next
+        .current_dir(dir.path())
+        .arg("undo")
+        .assert()
+        .success();
+    assert_eq!(
+        fs::read_to_string(dir.path().join("first.txt")).unwrap(),
+        "before\n"
+    );
+    assert!(!dir.path().join("second.txt").exists());
+    assert!(tx_ids(dir.path()).is_empty());
 }
 
 #[test]
