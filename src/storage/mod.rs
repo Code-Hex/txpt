@@ -51,7 +51,12 @@ pub fn tx_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    format!("{}-{:04x}", now.as_secs(), now.subsec_nanos() & 0xffff)
+    format!(
+        "{}.{:09}-{:04x}",
+        now.as_secs(),
+        now.subsec_nanos(),
+        now.subsec_nanos() & 0xffff
+    )
 }
 
 pub fn tx_paths(root: &Path, id: &str) -> Result<TxPaths> {
@@ -81,7 +86,13 @@ pub fn list_tx_ids(root: &Path) -> Result<Vec<String>> {
         .with_context(|| format!("no transaction directory at {}", tx_root.display()))?
         .collect::<std::io::Result<Vec<_>>>()?;
     entries.retain(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()));
-    entries.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+    entries.sort_by(|left, right| {
+        let left_modified = left.metadata().and_then(|meta| meta.modified()).ok();
+        let right_modified = right.metadata().and_then(|meta| meta.modified()).ok();
+        right_modified
+            .cmp(&left_modified)
+            .then_with(|| right.file_name().cmp(&left.file_name()))
+    });
     Ok(entries
         .into_iter()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())

@@ -1,6 +1,14 @@
+#![allow(unsafe_code)]
+
 use std::fs;
+use std::io::{Read, Write};
+use std::os::fd::FromRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::process::{Command as StdCommand, Stdio};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -25,6 +33,77 @@ fn run_tx(root: &Path, script: &str) -> assert_cmd::assert::Assert {
         script,
     ]);
     cmd.assert()
+}
+
+fn run_interactive_txpt_session(
+    root: &Path,
+    extra_path: Option<&Path>,
+    input: &str,
+) -> std::process::Output {
+    let txpt_bin = assert_cmd::cargo::cargo_bin("txpt");
+    let mut master = 0;
+    let mut slave = 0;
+    let rc = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(rc, 0, "openpty failed");
+
+    let master_file = unsafe { fs::File::from_raw_fd(master) };
+    let mut writer = master_file.try_clone().unwrap();
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let reader_output = Arc::clone(&output);
+    thread::spawn(move || {
+        let mut reader = master_file;
+        let mut chunk = [0; 8192];
+        loop {
+            let read = reader.read(&mut chunk).unwrap_or(0);
+            if read == 0 {
+                break;
+            }
+            reader_output
+                .lock()
+                .unwrap()
+                .extend_from_slice(&chunk[..read]);
+        }
+    });
+
+    let slave_file = unsafe { fs::File::from_raw_fd(slave) };
+    let mut command = StdCommand::new(txpt_bin);
+    command.current_dir(root).env("SHELL", "/bin/sh");
+    if let Some(extra_path) = extra_path {
+        command.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                extra_path.display(),
+                std::env::var("PATH").unwrap()
+            ),
+        );
+    }
+    let mut child = command
+        .stdin(Stdio::from(slave_file.try_clone().unwrap()))
+        .stdout(Stdio::from(slave_file.try_clone().unwrap()))
+        .stderr(Stdio::from(slave_file))
+        .spawn()
+        .expect("start pty-driven txpt session");
+    thread::sleep(Duration::from_millis(300));
+    writer
+        .write_all(input.as_bytes())
+        .expect("write session input");
+    drop(writer);
+    let status = child.wait().expect("wait for txpt session");
+    thread::sleep(Duration::from_millis(100));
+    std::process::Output {
+        status,
+        stdout: output.lock().unwrap().clone(),
+        stderr: Vec::new(),
+    }
 }
 
 #[test]
@@ -96,6 +175,93 @@ fn shell_mode_can_expand_aliases_defined_in_shell_command() {
         fs::read_to_string(dir.path().join("alias.txt")).unwrap(),
         "aliased"
     );
+}
+
+#[test]
+fn protected_shell_session_e2e_wraps_commands_and_undoes_points() {
+    let dir = TempDir::new().unwrap();
+    let real_bin = dir.path().join("real-bin");
+    fs::create_dir_all(&real_bin).unwrap();
+    fs::write(dir.path().join(".gitignore"), "node_modules/\n").unwrap();
+    fs::write(dir.path().join("doomed.txt"), "important\n").unwrap();
+    write_executable(
+        &real_bin.join("npm"),
+        "#!/bin/sh\npython3 - <<'PY'\nimport os\nos.makedirs('node_modules/zod', exist_ok=True)\nopen('node_modules/zod/index.js', 'w').write('zod')\nopen('package.json', 'w').write('{\"dependencies\":{\"zod\":\"1\"}}')\nPY\n",
+    );
+
+    let input = "rm doomed.txt\ntxpt diff @last\ntxpt undo @last\nhash -r\nnpm install zod\ntxpt diff @last\ntxpt undo @last\nexit\n";
+    let output = run_interactive_txpt_session(dir.path(), Some(&real_bin), input);
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join("doomed.txt")).unwrap(),
+        "important\n"
+    );
+    assert!(!dir.path().join("node_modules").exists());
+    assert!(!dir.path().join("package.json").exists());
+    let ids = tx_ids(dir.path());
+    assert!(ids.len() >= 2);
+    let commands = ids
+        .into_iter()
+        .map(|id| {
+            fs::read_to_string(dir.path().join(".txpt/tx").join(id).join("command.json")).unwrap()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(commands.contains(r#""npm""#));
+    assert!(commands.contains(r#""rm""#));
+}
+
+#[test]
+fn run_receipt_warns_for_commands_with_partial_external_scope() {
+    let dir = TempDir::new().unwrap();
+
+    let mut dd = txpt();
+    dd.current_dir(dir.path())
+        .args([
+            "run",
+            "--root",
+            dir.path().to_str().unwrap(),
+            "--snapshot",
+            "copy",
+            "--display-command",
+            r#"["dd","of=outside.img"]"#,
+            "--",
+            "sh",
+            "-c",
+            "printf x > touched.txt",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "may modify files outside the transaction root",
+        ));
+
+    let mut git = txpt();
+    git.current_dir(dir.path())
+        .args([
+            "run",
+            "--root",
+            dir.path().to_str().unwrap(),
+            "--snapshot",
+            "copy",
+            "--display-command",
+            r#"["git","stash","pop"]"#,
+            "--",
+            "sh",
+            "-c",
+            "printf y > git.txt",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "txpt restores workspace files, not Git index",
+        ));
 }
 
 #[test]
@@ -640,7 +806,42 @@ fn ls_aliases_match_list_commands() {
 }
 
 #[test]
-fn shims_edit_opens_editor_for_active_policy() {
+fn shims_edit_opens_editor_and_regenerates_shims() {
+    let dir = TempDir::new().unwrap();
+    let session = dir.path().join(".txpt/sessions/test");
+    fs::create_dir_all(session.join("bin")).unwrap();
+    fs::write(
+        session.join("policy.json"),
+        r#"{"protect":["npm install:*"],"ignore":["npm test:*"]}"#,
+    )
+    .unwrap();
+    assert!(!session.join("bin/npm").exists());
+
+    let mut edit = txpt();
+    edit.current_dir(dir.path())
+        .env("TXPT_SESSION_DIR", &session)
+        .env("EDITOR", "true")
+        .args(["shims", "edit"])
+        .assert()
+        .success();
+    assert!(session.join("bin/npm").exists());
+}
+
+#[test]
+fn shims_edit_fails_clearly_without_active_session() {
+    let dir = TempDir::new().unwrap();
+    let mut edit = txpt();
+    edit.current_dir(dir.path())
+        .env("EDITOR", "true")
+        .args(["shims", "edit"])
+        .assert()
+        .code(64)
+        .stderr(predicate::str::contains("TXPT_SESSION_DIR"))
+        .stderr(predicate::str::contains("active txpt session"));
+}
+
+#[test]
+fn shims_edit_reports_editor_failure() {
     let dir = TempDir::new().unwrap();
     let session = dir.path().join(".txpt/sessions/test");
     fs::create_dir_all(session.join("bin")).unwrap();
@@ -653,10 +854,37 @@ fn shims_edit_opens_editor_for_active_policy() {
     let mut edit = txpt();
     edit.current_dir(dir.path())
         .env("TXPT_SESSION_DIR", &session)
-        .env("EDITOR", "true")
+        .env("EDITOR", "false")
         .args(["shims", "edit"])
         .assert()
-        .success();
+        .code(64)
+        .stderr(predicate::str::contains("editor exited"));
+}
+
+#[test]
+fn shims_edit_warns_on_invalid_policy_json() {
+    let dir = TempDir::new().unwrap();
+    let session = dir.path().join(".txpt/sessions/test");
+    fs::create_dir_all(session.join("bin")).unwrap();
+    fs::write(
+        session.join("policy.json"),
+        r#"{"protect":["npm install:*"],"ignore":["npm test:*"]}"#,
+    )
+    .unwrap();
+    let editor = dir.path().join("bad-editor");
+    write_executable(&editor, "#!/bin/sh\nprintf '{not json' > \"$1\"\n");
+
+    let mut edit = txpt();
+    edit.current_dir(dir.path())
+        .env("TXPT_SESSION_DIR", &session)
+        .env("EDITOR", &editor)
+        .args(["shims", "edit"])
+        .assert()
+        .code(74)
+        .stderr(predicate::str::contains("warning:"))
+        .stderr(predicate::str::contains("policy.json is invalid"))
+        .stderr(predicate::str::contains("shims were not regenerated"));
+    assert!(!session.join("bin/npm").exists());
 }
 
 #[test]

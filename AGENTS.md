@@ -2,7 +2,7 @@
 
 This repository contains `txpt`, a Rust CLI for creating reversible transaction points around Unix commands.
 
-Product behavior, CLI semantics, rollback guarantees, platform behavior, and MVP scope belong in `SPEC.md`. Read `SPEC.md` before changing user-visible behavior. Do not duplicate the full product specification here.
+Product behavior, CLI semantics, rollback guarantees, platform behavior, and release scope belong in `SPEC.md`. Read `SPEC.md` before changing user-visible behavior. Do not duplicate the full product specification here.
 
 ## Working principles
 
@@ -170,4 +170,3 @@ A change is not complete until:
 * `cargo test --all-targets --all-features` passes
 * user-facing behavior is documented
 * rollback safety assumptions are explicit
-

@@ -2,24 +2,19 @@
 
 `txpt` is a protected shell session for common destructive workspace commands.
 
-It uses your real shell, wraps selected external commands with undo points, and lets you inspect or roll back the last point.
-
-Start a protected shell:
-
 ```sh
 txpt
-```
-
-Inside the session, common destructive commands are wrapped automatically:
-
-```sh
 rm -rf generated/
-mv old.ts new.ts
 npm install zod
-cargo update
 txpt diff
 txpt undo
 ```
+
+It uses your real shell and wraps selected external commands with undo points.
+
+It protects common workspace-mutating commands such as `rm`, `mv`, `cp`, `npm install`, `cargo update`, `sed -i`, and selected Git cleanup commands.
+
+It is not a sandbox. It does not protect `/bin/rm`, `command rm`, shell redirections, interpreter-driven file deletion, sudo changes, files outside the root, or external services.
 
 Default guards include file-mutating commands such as `rm`, `unlink`, `rmdir`, `mv`, `cp`, `ln`, `chmod`, `chown`, `truncate`, `patch`, `tee`, `rsync`, and `dd`; in-place editors such as `sed -i` and `perl -i`; destructive `find` / `xargs` patterns; selected Git workspace cleanup commands; and mutating package-manager commands for JavaScript, Rust, Go, and Python tools.
 
@@ -34,14 +29,14 @@ command -v npm
 # .../.txpt/sessions/<id>/bin/npm
 ```
 
-If your shell already defines a function such as `npm() { ... }`, txpt preserves it by wrapping that function inside the session:
+For zsh and bash, txpt makes a best-effort attempt to preserve shell functions such as `npm() { ... }` by wrapping that function inside the session:
 
 ```sh
 type npm
 # npm is a shell function from .../.txpt/sessions/<id>/.zshrc
 ```
 
-In that case, wrapped commands still get txpt points, and pass-through commands still call your original function.
+In that case, wrapped commands still get txpt points, and pass-through commands still call your original function. This is not a shell compatibility guarantee.
 
 txpt does not start another interactive shell just to call that function. It records the before state, calls your original function in the current shell, then records the after state.
 
@@ -59,6 +54,8 @@ Commands matching `protect` are wrapped unless they also match `ignore`. Command
 ```sh
 txpt shims edit
 ```
+
+`shims edit` requires an active txpt session. It uses `$EDITOR`, or falls back to `vim`, `vi`, then `nano`; after the editor exits, txpt validates `policy.json` and regenerates shims only when the JSON is valid.
 
 txpt generates shims only for commands named by `protect` or `ignore` rules. It does not try to wrap your whole `PATH`.
 

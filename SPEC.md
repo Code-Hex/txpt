@@ -1,4 +1,4 @@
-# txpt MVP Specification
+# txpt Specification
 
 `txpt` (Transaction Point) is a protected shell session for common destructive workspace commands.
 
@@ -86,9 +86,9 @@ The session uses the user's real `$SHELL`; txpt does not parse shell syntax. Sel
 
 txpt is not a sandbox. It protects normal interactive command use through shell functions and `PATH` shims. It does not protect absolute-path invocations such as `/bin/rm`, `command <name>`, shell redirections, interpreter-driven file deletion, or external side effects.
 
-For zsh and bash, txpt installs session-local startup hooks that keep the shim directory at the front of `PATH` before each prompt and command execution. This is necessary because user shell startup files, version managers, and package managers may rewrite `PATH` after the shell starts.
+For zsh and bash, txpt installs best-effort session-local startup hooks that keep the shim directory at the front of `PATH` before each prompt and command execution. This is necessary because user shell startup files, version managers, and package managers may rewrite `PATH` after the shell starts. Hook installation and shell function wrapping are not a full shell compatibility guarantee.
 
-If the user's shell already defines a function with the same name as a txpt shim, txpt preserves that function inside the session by moving it to `__txpt_original_<cmd>` and installing a txpt wrapper function in its place. Wrapped invocations create a transaction point and then call the original function. Pass-through invocations call the original function directly. Same-name aliases are removed inside the session because they cannot be safely invoked from txpt's subprocess boundary.
+If the user's zsh or bash already defines a function with the same name as a txpt shim, txpt makes a best-effort attempt to preserve that function inside the session by moving it to `__txpt_original_<cmd>` and installing a txpt wrapper function in its place. Wrapped invocations create a transaction point and then call the original function. Pass-through invocations call the original function directly. Same-name aliases are removed inside the session because they cannot be safely invoked from txpt's subprocess boundary.
 
 Function wrapping does not run the command inside an extra interactive shell. The wrapper asks txpt to create the before snapshot, invokes the original function in the current shell, then asks txpt to record the after state. This keeps shell-provided behavior such as security wrappers while avoiding nested shell execution for every protected command.
 
@@ -179,11 +179,13 @@ Example:
 }
 ```
 
-`txpt shims protect`, `txpt shims unprotect`, `txpt shims ignore`, `txpt shims unignore`, and `txpt shims edit` update this policy. `txpt shims edit` opens `policy.json` with `$EDITOR`. Shims read the policy each time they run, so changes apply without restarting the shell.
+`txpt shims protect`, `txpt shims unprotect`, `txpt shims ignore`, `txpt shims unignore`, and `txpt shims edit` update this policy. `txpt shims edit` requires an active session, opens `policy.json` with `$EDITOR`, and falls back to `vim`, `vi`, then `nano` when `$EDITOR` is unset. After editing, txpt validates the JSON and regenerates shims. If the edited JSON is invalid, txpt warns and leaves the existing shims unchanged. Shims read the policy each time they run, so changes apply without restarting the shell.
 
 `txpt session` protects selected external commands. It does not make shell builtins, redirections, pipelines, aliases, or functions transactional.
 
 Protected Git cleanup commands may modify `.git` state. txpt can restore protected workspace files, but it does not roll back the Git index, reflog, repository metadata, or other `.git` contents.
+
+Commands such as `dd` and `rsync` may write outside the transaction root depending on their arguments. txpt records and restores protected workspace paths only, and the run receipt warns when a default-guarded command has this wider side-effect class.
 
 ## Guarantee Boundary
 
@@ -202,6 +204,20 @@ Sensitive files are excluded by default:
 - `.netrc`
 
 Ignored and sensitive changes are reported as `unprotected` unless explicitly included.
+
+## Ignore Semantics
+
+txpt reads ignore lines from `.txptignore`, `.gitignore`, and `.ignore`, but this is not a full Git ignore implementation.
+
+Current ignore matching is intentionally simple:
+
+- blank lines and `#` comments are ignored
+- lines beginning with `!` are ignored rather than treated as negation
+- a trailing `/` is stripped
+- a pattern matches a path component with the same name, or a root-relative path prefix
+- advanced Git ignore features such as anchored patterns, `**`, escaping, directory-only semantics, and negation are not guaranteed
+
+Built-in heavy directories and sensitive file patterns are applied in addition to these files.
 
 ## Root Detection
 
@@ -247,7 +263,7 @@ Transactions are stored as:
 
 ## Snapshot Engines
 
-MVP first-class platforms:
+v0.1 first-class platforms:
 
 - macOS: APFS `clonefile` -> normal copy -> record-only
 - Linux: `ioctl(FICLONE)` -> normal copy -> record-only
