@@ -27,6 +27,8 @@ txpt undo @last
 txpt rollback @last
 ```
 
+After a successful undo, that point is removed from the active stack, so the next `@last` points to the previous undoable command.
+
 You can still create a one-off point explicitly:
 
 ```sh
