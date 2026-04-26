@@ -644,6 +644,9 @@ fn start_session() -> Result<i32> {
     eprintln!("root: {}", root.display());
     eprintln!("mode: protected shell");
     eprintln!("shims: {}", shim_commands(&policy).join(" "));
+    eprintln!(
+        "note: txpt is not a sandbox; absolute paths, shell redirections, and interpreter-driven file changes are outside session shims."
+    );
     let mut command = Command::new(&shell);
     configure_interactive_shell(&mut command, &session_dir, &shell);
     let status = command
@@ -681,6 +684,9 @@ fn session_dashboard() -> Result<i32> {
     for command in shim_commands(&policy) {
         println!("  {command}");
     }
+    println!(
+        "\nnot sandboxed:\n  absolute-path commands, `command <name>`, shell redirections, pipelines, and interpreter-driven file changes"
+    );
     if let Ok(paths) = storage::existing_tx_paths(&root, None) {
         if let Ok(view) = tx_view(&root, &paths, Some("@last")) {
             println!(
@@ -1135,6 +1141,36 @@ fn argv_json(args: Vec<String>) -> Result<i32> {
 fn default_session_policy() -> SessionPolicy {
     SessionPolicy {
         protect: vec![
+            "rm:*".to_owned(),
+            "unlink:*".to_owned(),
+            "rmdir:*".to_owned(),
+            "mv:*".to_owned(),
+            "cp:*".to_owned(),
+            "ln:*".to_owned(),
+            "mkdir:*".to_owned(),
+            "touch:*".to_owned(),
+            "chmod:*".to_owned(),
+            "chown:*".to_owned(),
+            "truncate:*".to_owned(),
+            "patch:*".to_owned(),
+            "tee:*".to_owned(),
+            "rsync:*".to_owned(),
+            "dd:*".to_owned(),
+            "sed:* -i:*".to_owned(),
+            "sed:* --in-place:*".to_owned(),
+            "perl:* -i:*".to_owned(),
+            "find:* -delete:*".to_owned(),
+            "find:* -exec rm:*".to_owned(),
+            "find:* -execdir rm:*".to_owned(),
+            "xargs:* rm:*".to_owned(),
+            "git clean:*".to_owned(),
+            "git reset --hard:*".to_owned(),
+            "git restore:*".to_owned(),
+            "git checkout --:*".to_owned(),
+            "git rm:*".to_owned(),
+            "git apply:*".to_owned(),
+            "git stash pop:*".to_owned(),
+            "git stash apply:*".to_owned(),
             "npm install:*".to_owned(),
             "npm update:*".to_owned(),
             "npm uninstall:*".to_owned(),
@@ -1142,51 +1178,38 @@ fn default_session_policy() -> SessionPolicy {
             "npm add:*".to_owned(),
             "npm remove:*".to_owned(),
             "pnpm install:*".to_owned(),
-            "pnpm update:*".to_owned(),
-            "pnpm uninstall:*".to_owned(),
-            "pnpm audit fix:*".to_owned(),
             "pnpm add:*".to_owned(),
+            "pnpm update:*".to_owned(),
             "pnpm remove:*".to_owned(),
             "yarn install:*".to_owned(),
-            "yarn update:*".to_owned(),
-            "yarn uninstall:*".to_owned(),
-            "yarn audit fix:*".to_owned(),
             "yarn add:*".to_owned(),
             "yarn remove:*".to_owned(),
+            "yarn upgrade:*".to_owned(),
             "bun install:*".to_owned(),
-            "bun update:*".to_owned(),
-            "bun uninstall:*".to_owned(),
-            "bun audit fix:*".to_owned(),
             "bun add:*".to_owned(),
             "bun remove:*".to_owned(),
+            "bun update:*".to_owned(),
             "cargo update:*".to_owned(),
             "cargo add:*".to_owned(),
             "cargo remove:*".to_owned(),
             "go get:*".to_owned(),
             "go mod tidy:*".to_owned(),
+            "poetry install:*".to_owned(),
             "poetry add:*".to_owned(),
             "poetry remove:*".to_owned(),
             "poetry update:*".to_owned(),
-            "poetry install:*".to_owned(),
-            "rm:*".to_owned(),
-            "mv:*".to_owned(),
-            "cp:*".to_owned(),
-            "mkdir:*".to_owned(),
-            "rmdir:*".to_owned(),
-            "touch:*".to_owned(),
-            "chmod:*".to_owned(),
+            "uv add:*".to_owned(),
+            "uv remove:*".to_owned(),
+            "uv sync:*".to_owned(),
+            "uv lock:*".to_owned(),
         ],
         ignore: vec![
+            "* --help".to_owned(),
+            "* -h".to_owned(),
             "* --version".to_owned(),
             "* -v".to_owned(),
-            "npm --version".to_owned(),
-            "npm -v".to_owned(),
-            "pnpm --version".to_owned(),
-            "pnpm -v".to_owned(),
-            "yarn --version".to_owned(),
-            "yarn -v".to_owned(),
-            "bun --version".to_owned(),
-            "bun -v".to_owned(),
+            "* version".to_owned(),
+            "* help".to_owned(),
         ],
     }
 }
@@ -1271,14 +1294,24 @@ fn bash_pattern_matches(pattern: &str, command: &str) -> bool {
 }
 
 fn normalize_bash_pattern(pattern: &str) -> String {
-    pattern
-        .strip_suffix(":*")
-        .map(|prefix| format!("{prefix} *"))
-        .unwrap_or_else(|| pattern.to_owned())
+    if !pattern.contains(":*") {
+        return pattern.to_owned();
+    }
+    if let Some(prefix) = pattern.strip_suffix(":*") {
+        let prefix = prefix.replace(":*", "*");
+        if !prefix.contains('*') {
+            return format!("{prefix} *");
+        }
+        return format!("{prefix}*");
+    }
+    pattern.replace(":*", "*")
 }
 
 fn wildcard_match(pattern: &str, value: &str) -> bool {
-    if let Some(prefix) = pattern.strip_suffix(" *") {
+    if let Some(prefix) = pattern
+        .strip_suffix(" *")
+        .filter(|prefix| !prefix.contains('*'))
+    {
         return value == prefix || value.starts_with(&format!("{prefix} "));
     }
     let parts = pattern.split('*').collect::<Vec<_>>();
@@ -1309,10 +1342,10 @@ fn wildcard_match(pattern: &str, value: &str) -> bool {
 }
 
 fn shim_command_from_pattern(pattern: &str) -> Option<String> {
-    let pattern = normalize_bash_pattern(pattern);
     let first = pattern
         .split_whitespace()
         .next()
+        .map(|part| part.trim_end_matches(":*"))
         .filter(|part| !part.contains('*'))?;
     Some(first.to_owned())
 }
@@ -1617,6 +1650,15 @@ fn print_run_receipt(report: &RunReport, plan: &rollback::RollbackPlan, changes:
     }
     if changes.len() > 12 {
         eprintln!("  ... {} more", changes.len() - 12);
+    }
+    if report
+        .command
+        .first()
+        .is_some_and(|command| command == "git")
+    {
+        eprintln!(
+            "\nwarning:\n  git command may modify .git state.\n  txpt restores protected workspace files, not Git index or repository metadata."
+        );
     }
     eprintln!(
         "\nrollback:\n  state: {}\n  will restore: {} paths\n  will remove:  {} paths\n\nnext:\n  inspect: txpt diff @last\n  preview: txpt undo @last --dry-run\n  undo:    txpt undo @last\n  alias:   txpt rollback @last",

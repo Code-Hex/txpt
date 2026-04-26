@@ -1,6 +1,6 @@
 # txpt
 
-`txpt` is a protected shell session for risky workspace commands.
+`txpt` is a protected shell session for common destructive workspace commands.
 
 It uses your real shell, wraps selected external commands with undo points, and lets you inspect or roll back the last point.
 
@@ -10,14 +10,18 @@ Start a protected shell:
 txpt
 ```
 
-Inside the session, package-manager style commands are wrapped automatically:
+Inside the session, common destructive commands are wrapped automatically:
 
 ```sh
+rm -rf generated/
+mv old.ts new.ts
 npm install zod
 cargo update
 txpt diff
 txpt undo
 ```
+
+Default guards include file-mutating commands such as `rm`, `unlink`, `rmdir`, `mv`, `cp`, `ln`, `chmod`, `chown`, `truncate`, `patch`, `tee`, `rsync`, and `dd`; in-place editors such as `sed -i` and `perl -i`; destructive `find` / `xargs` patterns; selected Git workspace cleanup commands; and mutating package-manager commands for JavaScript, Rust, Go, and Python tools.
 
 Starting another txpt session from inside a session is refused. Running `txpt` by itself inside a session shows the session dashboard.
 
@@ -46,7 +50,7 @@ Shim rules are controlled by `.txpt/sessions/<id>/policy.json`:
 ```json
 {
   "protect": ["npm install:*", "cargo update:*", "rm:*"],
-  "ignore": ["* --version", "* -v"]
+  "ignore": ["* --help", "* -h", "* --version", "* -v", "* version", "* help"]
 }
 ```
 
@@ -77,7 +81,7 @@ txpt rollback @last
 
 `txpt` is not a shell, backup system, container, or AI wrapper. It is a small command receipt and rollback layer for files under the detected project root.
 
-`txpt` session protects selected external commands. It does not make the shell itself transactional, and it does not capture shell builtins, redirections, or pipelines. Use `txpt run --shell '<command>'` when the shell syntax itself must be part of the point.
+`txpt` is not a sandbox. A session protects normal interactive command use through shell functions and `PATH` shims. It does not protect absolute-path invocations such as `/bin/rm`, `command rm`, shell redirections, interpreter-driven file deletion, or external side effects. Use `txpt run --shell '<command>'` when the shell syntax itself must be part of the point.
 
 `txpt` can roll back protected files inside the detected transaction root.
 

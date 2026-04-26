@@ -1,6 +1,6 @@
 # txpt MVP Specification
 
-`txpt` (Transaction Point) creates reversible transaction points around Unix commands.
+`txpt` (Transaction Point) is a protected shell session for common destructive workspace commands.
 
 `txpt` can roll back protected files inside the detected transaction root.
 
@@ -84,6 +84,8 @@ TXPT_SESSION_DIR=<root>/.txpt/sessions/<id>
 
 The session uses the user's real `$SHELL`; txpt does not parse shell syntax. Selected external commands are routed through `txpt run`, while all other shell behavior remains handled by the user's shell.
 
+txpt is not a sandbox. It protects normal interactive command use through shell functions and `PATH` shims. It does not protect absolute-path invocations such as `/bin/rm`, `command <name>`, shell redirections, interpreter-driven file deletion, or external side effects.
+
 For zsh and bash, txpt installs session-local startup hooks that keep the shim directory at the front of `PATH` before each prompt and command execution. This is necessary because user shell startup files, version managers, and package managers may rewrite `PATH` after the shell starts.
 
 If the user's shell already defines a function with the same name as a txpt shim, txpt preserves that function inside the session by moving it to `__txpt_original_<cmd>` and installing a txpt wrapper function in its place. Wrapped invocations create a transaction point and then call the original function. Pass-through invocations call the original function directly. Same-name aliases are removed inside the session because they cannot be safely invoked from txpt's subprocess boundary.
@@ -111,7 +113,12 @@ Session policy is explicit. Commands matching `protect` are wrapped unless they 
 ```text
 npm install:*
 rm:*
+* --help
+* -h
 * --version
+* -v
+* version
+* help
 ```
 
 `*` matches any sequence of characters, including spaces. A trailing `:*` is treated like a trailing ` *`, matching the command prefix at a word boundary. For example, `npm install:*` matches `npm install` and `npm install zod`, but does not match `npm installer`.
@@ -119,13 +126,39 @@ rm:*
 Default protect rules cover common workspace-mutating commands such as:
 
 ```text
+# file destructive / mutating
+rm:* / unlink:* / rmdir:* / mv:* / cp:* / ln:* / mkdir:* / touch:* / chmod:* / chown:*
+truncate:* / patch:* / tee:* / rsync:* / dd:*
+
+# in-place editors
+sed:* -i:* / sed:* --in-place:* / perl:* -i:*
+
+# find / xargs destructive patterns
+find:* -delete:* / find:* -exec rm:* / find:* -execdir rm:* / xargs:* rm:*
+
+# git workspace destructive
+git clean:* / git reset --hard:* / git restore:* / git checkout --:* / git rm:*
+git apply:* / git stash pop:* / git stash apply:*
+
+# JS
 npm install:* / npm update:* / npm uninstall:* / npm audit fix:* / npm add:* / npm remove:*
-cargo update:* / cargo add:* / cargo remove:*
-go get:* / go mod tidy:*
-rm:* / mv:* / cp:* / mkdir:* / rmdir:* / touch:* / chmod:*
+pnpm install:* / pnpm add:* / pnpm update:* / pnpm remove:*
+yarn install:* / yarn add:* / yarn remove:* / yarn upgrade:*
+bun install:* / bun add:* / bun remove:* / bun update:*
+
+# Rust / Go
+cargo update:* / cargo add:* / cargo remove:* / go get:* / go mod tidy:*
+
+# Python
+poetry install:* / poetry add:* / poetry remove:* / poetry update:*
+uv add:* / uv remove:* / uv sync:* / uv lock:*
 ```
 
-Default ignore rules cover command metadata checks such as `* --version` and `* -v`.
+Default ignore rules cover command metadata checks:
+
+```text
+* --help / * -h / * --version / * -v / * version / * help
+```
 
 Commands not matching a protect rule are left alone. If a command is installed during a session and should be protected, add it explicitly with `txpt shims protect "command:*"` or edit `policy.json`.
 
@@ -142,13 +175,15 @@ Example:
 ```json
 {
   "protect": ["npm install:*", "cargo update:*", "rm:*"],
-  "ignore": ["* --version", "* -v"]
+  "ignore": ["* --help", "* -h", "* --version", "* -v", "* version", "* help"]
 }
 ```
 
 `txpt shims protect`, `txpt shims unprotect`, `txpt shims ignore`, `txpt shims unignore`, and `txpt shims edit` update this policy. `txpt shims edit` opens `policy.json` with `$EDITOR`. Shims read the policy each time they run, so changes apply without restarting the shell.
 
 `txpt session` protects selected external commands. It does not make shell builtins, redirections, pipelines, aliases, or functions transactional.
+
+Protected Git cleanup commands may modify `.git` state. txpt can restore protected workspace files, but it does not roll back the Git index, reflog, repository metadata, or other `.git` contents.
 
 ## Guarantee Boundary
 

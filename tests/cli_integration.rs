@@ -405,6 +405,111 @@ fn shim_policy_uses_claude_bash_pattern_syntax() {
 }
 
 #[test]
+fn shim_policy_matches_destructive_workspace_command_patterns() {
+    let dir = TempDir::new().unwrap();
+    let session = dir.path().join(".txpt/sessions/test");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(
+        session.join("policy.json"),
+        r#"{"protect":["unlink:*","ln:*","truncate:*","patch:*","tee:*","rsync:*","dd:*","sed:* -i:*","sed:* --in-place:*","perl:* -i:*","find:* -delete:*","find:* -exec rm:*","find:* -execdir rm:*","xargs:* rm:*","git clean:*","git reset --hard:*","git checkout --:*","git restore:*","git rm:*","git apply:*","git stash pop:*","git stash apply:*","uv add:*","uv remove:*","uv sync:*","uv lock:*"],"ignore":["* --version"]}"#,
+    )
+    .unwrap();
+
+    for args in [
+        vec!["shim-should-wrap", "unlink", "old.txt"],
+        vec!["shim-should-wrap", "ln", "-s", "a", "b"],
+        vec!["shim-should-wrap", "truncate", "-s", "0", "file.txt"],
+        vec!["shim-should-wrap", "patch", "-p1"],
+        vec!["shim-should-wrap", "tee", "file.txt"],
+        vec!["shim-should-wrap", "rsync", "-a", "src/", "dst/"],
+        vec!["shim-should-wrap", "dd", "if=a", "of=b"],
+        vec!["shim-should-wrap", "sed", "-i", "s/a/b/", "file.txt"],
+        vec![
+            "shim-should-wrap",
+            "sed",
+            "s/a/b/",
+            "--in-place",
+            "file.txt",
+        ],
+        vec![
+            "shim-should-wrap",
+            "perl",
+            "-i",
+            "-pe",
+            "s/a/b/",
+            "file.txt",
+        ],
+        vec!["shim-should-wrap", "find", ".", "-delete"],
+        vec!["shim-should-wrap", "find", ".", "-exec", "rm", "{}", ";"],
+        vec!["shim-should-wrap", "find", ".", "-execdir", "rm", "{}", ";"],
+        vec!["shim-should-wrap", "xargs", "-0", "rm", "-f"],
+        vec!["shim-should-wrap", "git", "clean", "-fd"],
+        vec!["shim-should-wrap", "git", "reset", "--hard"],
+        vec!["shim-should-wrap", "git", "checkout", "--", "file.txt"],
+        vec!["shim-should-wrap", "git", "restore", "file.txt"],
+        vec!["shim-should-wrap", "git", "rm", "file.txt"],
+        vec!["shim-should-wrap", "git", "apply", "change.patch"],
+        vec!["shim-should-wrap", "git", "stash", "pop"],
+        vec!["shim-should-wrap", "git", "stash", "apply"],
+        vec!["shim-should-wrap", "uv", "add", "requests"],
+        vec!["shim-should-wrap", "uv", "remove", "requests"],
+        vec!["shim-should-wrap", "uv", "sync"],
+        vec!["shim-should-wrap", "uv", "lock"],
+    ] {
+        let mut cmd = txpt();
+        cmd.current_dir(dir.path())
+            .env("TXPT_SESSION_DIR", &session)
+            .args(args)
+            .assert()
+            .success();
+    }
+
+    let mut version = txpt();
+    version
+        .current_dir(dir.path())
+        .env("TXPT_SESSION_DIR", &session)
+        .args(["shim-should-wrap", "git", "--version"])
+        .assert()
+        .code(1);
+}
+
+#[test]
+fn shim_policy_ignores_command_metadata_checks() {
+    let dir = TempDir::new().unwrap();
+    let session = dir.path().join(".txpt/sessions/test");
+    fs::create_dir_all(&session).unwrap();
+    fs::write(
+        session.join("policy.json"),
+        r#"{"protect":["git:*"],"ignore":["* --help","* -h","* --version","* -v","* version","* help"]}"#,
+    )
+    .unwrap();
+
+    for args in [
+        vec!["shim-should-wrap", "git", "--help"],
+        vec!["shim-should-wrap", "git", "-h"],
+        vec!["shim-should-wrap", "git", "--version"],
+        vec!["shim-should-wrap", "git", "-v"],
+        vec!["shim-should-wrap", "git", "version"],
+        vec!["shim-should-wrap", "git", "help"],
+    ] {
+        let mut cmd = txpt();
+        cmd.current_dir(dir.path())
+            .env("TXPT_SESSION_DIR", &session)
+            .args(args)
+            .assert()
+            .code(1);
+    }
+
+    let mut destructive = txpt();
+    destructive
+        .current_dir(dir.path())
+        .env("TXPT_SESSION_DIR", &session)
+        .args(["shim-should-wrap", "git", "clean", "-fd"])
+        .assert()
+        .success();
+}
+
+#[test]
 fn shim_begin_finish_records_current_shell_command_without_spawning_child() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join(".gitignore"), "node_modules/\n").unwrap();
