@@ -1228,6 +1228,84 @@ fn list_show_and_diff_surface_rollback_readiness() {
 }
 
 #[test]
+fn list_json_returns_active_point_views() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("package.json"), "{}\n").unwrap();
+    run_tx(dir.path(), "printf '{\"dependencies\":{}}' > package.json").success();
+
+    let mut list = txpt();
+    let output = list
+        .current_dir(dir.path())
+        .args(["ls", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let value: serde_json::Value = serde_json::from_slice(&output).unwrap();
+    let points = value.as_array().unwrap();
+    assert_eq!(points.len(), 1);
+    assert_eq!(points[0]["selector"], "@last");
+    assert_eq!(points[0]["command"]["argv"][0], "sh");
+    assert_eq!(points[0]["plan"]["state"], "undoable");
+}
+
+#[test]
+fn list_and_diff_colorize_human_output_when_forced() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("package.json"), "{}\n").unwrap();
+    run_tx(dir.path(), "printf '{\"dependencies\":{}}' > package.json").success();
+
+    let mut list = txpt();
+    list.current_dir(dir.path())
+        .env("CLICOLOR_FORCE", "1")
+        .arg("ls")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\u{1b}["));
+
+    let mut diff = txpt();
+    diff.current_dir(dir.path())
+        .env("CLICOLOR_FORCE", "1")
+        .args(["diff", "@last"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\u{1b}["))
+        .stdout(predicate::str::contains("\u{1b}[32m+"));
+}
+
+#[test]
+fn run_receipt_colorizes_sections_and_changed_status_when_forced() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("LICENSE"), "license\n").unwrap();
+
+    let mut run = txpt();
+    run.current_dir(dir.path())
+        .env("CLICOLOR_FORCE", "1")
+        .args([
+            "run",
+            "--root",
+            dir.path().to_str().unwrap(),
+            "--snapshot",
+            "copy",
+            "--",
+            "rm",
+            "LICENSE",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("\u{1b}[1mcommand\u{1b}[0m:"))
+        .stderr(predicate::str::contains("\u{1b}[1mresult\u{1b}[0m:"))
+        .stderr(predicate::str::contains("\u{1b}[1mchanged\u{1b}[0m:"))
+        .stderr(predicate::str::contains("\u{1b}[31mD\u{1b}[0m LICENSE"))
+        .stderr(predicate::str::contains("\u{1b}[1mrollback\u{1b}[0m:"))
+        .stderr(predicate::str::contains(
+            "state: \u{1b}[32mundoable\u{1b}[0m",
+        ))
+        .stderr(predicate::str::contains("\u{1b}[1mnext\u{1b}[0m:"));
+}
+
+#[test]
 fn reverted_points_are_popped_from_default_stack() {
     let dir = TempDir::new().unwrap();
     fs::write(dir.path().join("first.txt"), "before\n").unwrap();

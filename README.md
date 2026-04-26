@@ -25,9 +25,11 @@ txpt diff @last
 txpt undo @last --dry-run
 txpt undo @last
 txpt rollback @last
+txpt ls --json
 ```
 
 After a successful undo, that point is removed from the active stack, so the next `@last` points to the previous undoable command.
+Human `txpt ls` and `txpt diff` output is colored in terminals; use `NO_COLOR=1` to disable it.
 
 You can still create a one-off point explicitly:
 

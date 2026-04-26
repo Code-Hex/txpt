@@ -7,7 +7,7 @@ use crate::rollback;
 use crate::root;
 use crate::storage;
 
-use super::tx_state_label;
+use super::{style, tx_state_label};
 
 pub(crate) fn show_diff(args: Vec<String>) -> Result<i32> {
     let mut id = None;
@@ -57,8 +57,10 @@ pub(crate) fn show_diff(args: Vec<String>) -> Result<i32> {
     } else if stat {
         print_diff_stat(&changes);
     } else if name_status {
+        let style = style::Style::stdout();
         for change in changes {
-            println!("{}\t{}", diff::status_letter(&change.kind), change.path);
+            let letter = diff::status_letter(&change.kind);
+            println!("{}\t{}", style::status_letter(style, letter), change.path);
         }
     } else {
         print_diff_human(&paths, &plan, &changes)?;
@@ -71,10 +73,11 @@ fn print_diff_human(
     plan: &rollback::RollbackPlan,
     changes: &[ChangeEntry],
 ) -> Result<()> {
-    println!("txpt diff {}", plan.tx_id);
+    let style = style::Style::stdout();
+    println!("{} {}", style.bold("txpt diff"), style.cyan(&plan.tx_id));
     println!(
         "\nrollback:\n  state: {}\n  can undo: {} paths\n  conflicts: {} paths\n  unprotected: {} paths",
-        tx_state_label(&plan.state),
+        style::state(style, tx_state_label(&plan.state)),
         plan.summary.restorable + plan.summary.removable,
         plan.summary.conflicts,
         plan.summary.unprotected,
@@ -93,9 +96,9 @@ fn print_diff_human(
             .unwrap_or_else(|| (change.guarantee.clone(), String::new()));
         println!(
             "\n{} {}\n  rollback: {}",
-            diff::status_letter(&change.kind),
+            style::status_letter(style, diff::status_letter(&change.kind)),
             change.path,
-            status.0
+            rollback_status(style, &status.0)
         );
         if !status.1.is_empty() {
             println!("  reason: {}", status.1);
@@ -103,16 +106,31 @@ fn print_diff_human(
     }
     let patch = paths.tx_dir.join("diff.patch");
     if patch.exists() {
-        println!("\n{}", fs::read_to_string(patch)?);
+        println!();
+        for line in fs::read_to_string(patch)?.lines() {
+            println!("{}", style::patch_line(style, line));
+        }
     }
     Ok(())
 }
 
 fn print_diff_stat(changes: &[ChangeEntry]) {
+    let style = style::Style::stdout();
     for change in changes {
         println!(
             "{:<40} before={:<8?} after={:<8?}",
-            change.path, change.before_size, change.after_size
+            style.bold(&change.path),
+            change.before_size,
+            change.after_size
         );
+    }
+}
+
+fn rollback_status(style: style::Style, status: &str) -> String {
+    match status {
+        "ready" | "full" | "cleanup_only" => style.green(status),
+        "conflict" => style.red(status),
+        "unprotected" | "unsupported" | "record_only" => style.yellow(status),
+        _ => status.to_owned(),
     }
 }

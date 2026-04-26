@@ -26,8 +26,8 @@ txpt diff [TX_ID] --json
 txpt undo [TX_ID]
 txpt rollback [TX_ID]
 txpt show [TX_ID] [--json]
-txpt list [--ids]
-txpt ls [--ids]
+txpt list [--ids] [--json]
+txpt ls [--ids] [--json]
 txpt shims list
 txpt shims ls
 txpt shims protect <command-pattern>...
@@ -328,7 +328,9 @@ ID        AGE        STATE      EXIT  CHANGES      COMMAND
 @1        8m         conflict   0     ~1 +3 -0 !1 cargo update
 ```
 
-`txpt list --ids` and `txpt ls --ids` print raw transaction ids only.
+`txpt list --ids` and `txpt ls --ids` print raw transaction ids only. `txpt list --json` and `txpt ls --json` print the active point list as structured JSON.
+
+Human `txpt ls` and `txpt diff` output uses ANSI color when stdout is a terminal. `NO_COLOR` disables color, and `CLICOLOR_FORCE=1` forces it for demos and tests.
 
 `txpt show` reads `meta.json`, `command.json`, `changes.jsonl`, and the rollback plan to render a transaction card. `txpt show --json` prints the same structured view as JSON.
 

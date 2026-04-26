@@ -5,6 +5,7 @@ mod history;
 mod run_cmd;
 mod session;
 mod shims;
+mod style;
 mod undo_cmd;
 
 use std::collections::BTreeMap;
@@ -175,30 +176,46 @@ pub(crate) fn print_run_receipt(
     plan: &rollback::RollbackPlan,
     changes: &[ChangeEntry],
 ) {
+    let style = style::Style::stderr();
     eprintln!(
-        "\ntxpt point @last  {}\n\ncommand:\n  {}\n\nresult:\n  exit {}\n\nchanged:",
-        report.id,
+        "\n{} {}  {}\n\n{}:\n  {}\n\n{}:\n  exit {}\n\n{}:",
+        style.bold("txpt point"),
+        style.cyan("@last"),
+        style.cyan(&report.id),
+        style.bold("command"),
         report.command.join(" "),
+        style.bold("result"),
         report.child_exit_code,
+        style.bold("changed"),
     );
     for change in changes.iter().take(12) {
-        eprintln!("  {} {}", diff::status_letter(&change.kind), change.path);
+        eprintln!(
+            "  {} {}",
+            style::status_letter(style, diff::status_letter(&change.kind)),
+            change.path
+        );
     }
     if changes.len() > 12 {
-        eprintln!("  ... {} more", changes.len() - 12);
+        eprintln!("  {} {} more", style.dim("..."), changes.len() - 12);
     }
     let warnings = receipt_warnings(&report.command);
     if !warnings.is_empty() {
-        eprintln!("\nwarning:");
+        eprintln!("\n{}:", style.yellow("warning"));
         for warning in warnings {
             eprintln!("  {warning}");
         }
     }
     eprintln!(
-        "\nrollback:\n  state: {}\n  will restore: {} paths\n  will remove:  {} paths\n\nnext:\n  inspect: txpt diff @last\n  preview: txpt undo @last --dry-run\n  undo:    txpt undo @last\n  alias:   txpt rollback @last",
-        tx_state_label(&plan.state),
+        "\n{}:\n  state: {}\n  will restore: {} paths\n  will remove:  {} paths\n\n{}:\n  inspect: {}\n  preview: {}\n  undo:    {}\n  alias:   {}",
+        style.bold("rollback"),
+        style::state(style, tx_state_label(&plan.state)),
         plan.summary.restorable,
         plan.summary.removable,
+        style.bold("next"),
+        style.cyan("txpt diff @last"),
+        style.cyan("txpt undo @last --dry-run"),
+        style.cyan("txpt undo @last"),
+        style.cyan("txpt rollback @last"),
     );
 }
 
@@ -244,6 +261,6 @@ pub(crate) fn unsafe_getgid() -> u32 {
 
 fn print_help() {
     eprintln!(
-        "txpt creates reversible transaction points around Unix commands\n\nusage:\n  txpt                         # protected shell session when interactive\n  txpt -- <cmd> [args...]\n  txpt run [options] -- <cmd> [args...]\n  txpt run [options] --shell '<shell command>'\n  txpt diff [TX_ID]\n  txpt undo|rollback [TX_ID] [--dry-run] [--force] [--json]\n  txpt list|ls\n  txpt show [TX_ID]\n  txpt shims list|ls|status\n  txpt shims protect <command-pattern>...\n  txpt shims unprotect <command-pattern>...\n  txpt shims ignore <command-pattern>...\n  txpt shims unignore <command-pattern>...\n  txpt shims edit\n  txpt prune"
+        "txpt creates reversible transaction points around Unix commands\n\nusage:\n  txpt                         # protected shell session when interactive\n  txpt -- <cmd> [args...]\n  txpt run [options] -- <cmd> [args...]\n  txpt run [options] --shell '<shell command>'\n  txpt diff [TX_ID]\n  txpt undo|rollback [TX_ID] [--dry-run] [--force] [--json]\n  txpt list|ls [--ids] [--json]\n  txpt show [TX_ID]\n  txpt shims list|ls|status\n  txpt shims protect <command-pattern>...\n  txpt shims unprotect <command-pattern>...\n  txpt shims ignore <command-pattern>...\n  txpt shims unignore <command-pattern>...\n  txpt shims edit\n  txpt prune"
     );
 }

@@ -9,7 +9,7 @@ use crate::rollback;
 use crate::root;
 use crate::storage;
 
-use super::{CommandMeta, Meta, tx_state_label};
+use super::{CommandMeta, Meta, style, tx_state_label};
 
 pub(crate) fn show(args: Vec<String>) -> Result<i32> {
     let mut id = None;
@@ -57,7 +57,8 @@ pub(crate) fn show(args: Vec<String>) -> Result<i32> {
 
 pub(crate) fn list(args: Vec<String>) -> Result<i32> {
     let ids_only = args.iter().any(|arg| arg == "--ids");
-    if args.iter().any(|arg| arg != "--ids") {
+    let json = args.iter().any(|arg| arg == "--json");
+    if args.iter().any(|arg| arg != "--ids" && arg != "--json") {
         bail!("unknown list option");
     }
     let root = root::detect(None)?;
@@ -65,6 +66,32 @@ pub(crate) fn list(args: Vec<String>) -> Result<i32> {
         Ok(ids) => ids,
         Err(_) => return Ok(0),
     };
+    if json {
+        if ids_only {
+            println!("{}", serde_json::to_string_pretty(&ids)?);
+            return Ok(0);
+        }
+        let mut views = Vec::new();
+        for (index, id) in ids.iter().enumerate() {
+            let selector = if index == 0 {
+                "@last".to_owned()
+            } else {
+                format!("@{index}")
+            };
+            let paths = storage::existing_tx_paths(&root, Some(id))?;
+            match tx_view(&root, &paths, Some(&selector)) {
+                Ok(view) => views.push(serde_json::to_value(view)?),
+                Err(err) => views.push(serde_json::json!({
+                    "id": id,
+                    "selector": selector,
+                    "state": "broken",
+                    "error": err.to_string(),
+                })),
+            }
+        }
+        println!("{}", serde_json::to_string_pretty(&views)?);
+        return Ok(0);
+    }
     if ids.is_empty() {
         return Ok(0);
     }
@@ -74,9 +101,14 @@ pub(crate) fn list(args: Vec<String>) -> Result<i32> {
         }
         return Ok(0);
     }
+    let style = style::Style::stdout();
     println!(
-        "{:<8} {:<10} {:<10} {:<5} {:<12} COMMAND",
-        "ID", "AGE", "STATE", "EXIT", "CHANGES"
+        "{} {} {} {} {} COMMAND",
+        style.bold(format!("{:<8}", "ID")),
+        style.bold(format!("{:<10}", "AGE")),
+        style.bold(format!("{:<10}", "STATE")),
+        style.bold(format!("{:<5}", "EXIT")),
+        style.bold(format!("{:<12}", "CHANGES")),
     );
     for (index, id) in ids.iter().enumerate() {
         let selector = if index == 0 {
@@ -88,10 +120,10 @@ pub(crate) fn list(args: Vec<String>) -> Result<i32> {
         match tx_view(&root, &paths, Some(&selector)) {
             Ok(view) => {
                 println!(
-                    "{:<8} {:<10} {:<10} {:<5} {:<12} {}",
-                    selector,
+                    "{} {:<10} {} {:<5} {:<12} {}",
+                    style.cyan(format!("{selector:<8}")),
                     age(&view.meta.started_at),
-                    tx_state_label(&view.plan.state),
+                    style::state(style, &format!("{:<10}", tx_state_label(&view.plan.state))),
                     view.meta.child_exit_code,
                     change_summary(&view.changes),
                     view.command.argv.join(" "),
@@ -99,8 +131,13 @@ pub(crate) fn list(args: Vec<String>) -> Result<i32> {
             }
             Err(_) => {
                 println!(
-                    "{:<8} {:<10} {:<10} {:<5} {:<12} {}",
-                    selector, "?", "broken", "-", "-", id
+                    "{} {:<10} {} {:<5} {:<12} {}",
+                    style.cyan(format!("{selector:<8}")),
+                    "?",
+                    style::state(style, &format!("{:<10}", "broken")),
+                    "-",
+                    "-",
+                    id
                 );
             }
         }
