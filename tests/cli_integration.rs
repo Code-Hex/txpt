@@ -310,6 +310,50 @@ fn run_receipt_warns_for_commands_with_partial_external_scope() {
         .stderr(predicate::str::contains(
             "txpt restores workspace files, not Git index",
         ));
+
+    let mut git_restore_staged = txpt();
+    git_restore_staged
+        .current_dir(dir.path())
+        .args([
+            "run",
+            "--root",
+            dir.path().to_str().unwrap(),
+            "--snapshot",
+            "copy",
+            "--display-command",
+            r#"["git","restore","--staged","file.txt"]"#,
+            "--",
+            "sh",
+            "-c",
+            "printf z > staged.txt",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "txpt restores workspace files, not Git index",
+        ));
+
+    let mut git_rm_cached = txpt();
+    git_rm_cached
+        .current_dir(dir.path())
+        .args([
+            "run",
+            "--root",
+            dir.path().to_str().unwrap(),
+            "--snapshot",
+            "copy",
+            "--display-command",
+            r#"["git","rm","--cached","file.txt"]"#,
+            "--",
+            "sh",
+            "-c",
+            "printf cached > cached.txt",
+        ])
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "txpt restores workspace files, not Git index",
+        ));
 }
 
 #[test]

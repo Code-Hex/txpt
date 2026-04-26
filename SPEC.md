@@ -183,7 +183,7 @@ Example:
 
 A txpt session protects selected external commands. It does not make shell builtins, redirections, pipelines, aliases, or functions transactional.
 
-Protected Git cleanup commands may modify `.git` state. txpt can restore protected workspace files, but it does not roll back the Git index, reflog, repository metadata, or other `.git` contents.
+Protected Git cleanup and index commands may modify `.git` state. txpt can restore protected workspace files, but it does not roll back the Git index, reflog, repository metadata, or other `.git` contents. The run receipt warns for default-guarded Git commands that are known to touch this boundary, including `git clean`, `git reset --hard`, `git restore --staged`, `git rm --cached`, and `git stash pop/apply`.
 
 Commands such as `dd` and `rsync` may write outside the transaction root depending on their arguments. txpt records and restores protected workspace paths only, and the run receipt warns when a default-guarded command has this wider side-effect class.
 

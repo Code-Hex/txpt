@@ -160,6 +160,8 @@ fn receipt_warnings(command: &[String]) -> Vec<&'static str> {
     if program == "git"
         && (command_line.starts_with("git clean")
             || command_line.starts_with("git reset --hard")
+            || command_line.starts_with("git restore --staged")
+            || command_line.starts_with("git rm --cached")
             || command_line.starts_with("git stash pop")
             || command_line.starts_with("git stash apply"))
     {
