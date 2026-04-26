@@ -18,6 +18,7 @@ pub enum TxState {
     Partial,
     Conflict,
     Reverted,
+    RecordOnly,
     Broken,
 }
 
@@ -118,11 +119,13 @@ pub fn undo(root: &Path, paths: &TxPaths, dry_run: bool, force: bool) -> Result<
 pub fn apply_plan(
     root: &Path,
     paths: &TxPaths,
-    plan: &RollbackPlan,
+    _planned: &RollbackPlan,
     dry_run: bool,
     force: bool,
 ) -> Result<RollbackResult> {
-    if plan.state == TxState::Broken {
+    let fresh_plan = plan(root, paths);
+    let plan = &fresh_plan;
+    if matches!(plan.state, TxState::Broken | TxState::RecordOnly) {
         bail!("rollback unsupported");
     }
     if plan.state == TxState::Reverted {
@@ -202,7 +205,23 @@ pub fn apply_plan(
 
 fn build_plan(root: &Path, paths: &TxPaths) -> Result<RollbackPlan> {
     if snapshot_engine(paths)? == "record-only" {
-        bail!("this transaction was recorded with --snapshot off; rollback is unavailable");
+        let changes = crate::diff::read_jsonl(&paths.tx_dir.join("changes.jsonl"))?;
+        let entries = ordered_changes(changes)
+            .into_iter()
+            .map(|change| RollbackPlanEntry {
+                path: change.path,
+                kind: change.kind,
+                action: RollbackAction::None,
+                status: RollbackStatus::Unsupported,
+                reason: Some("record-only point was created with --snapshot off".to_owned()),
+            })
+            .collect();
+        return Ok(RollbackPlan {
+            tx_id: tx_id_from_paths(paths),
+            state: TxState::RecordOnly,
+            entries,
+            summary: RollbackSummary::default(),
+        });
     }
     let after = manifest::read_jsonl(&paths.tx_dir.join("after.manifest.jsonl"))?;
     let changes = crate::diff::read_jsonl(&paths.tx_dir.join("changes.jsonl"))?;
@@ -303,7 +322,9 @@ fn requires_snapshot(kind: &ChangeKind) -> bool {
 }
 
 fn snapshot_exists(paths: &TxPaths, rel: &str) -> bool {
-    paths.snapshot_dir.join(rel).exists()
+    checked_relative_path(rel)
+        .map(|rel| paths.snapshot_dir.join(rel).exists())
+        .unwrap_or(false)
 }
 
 fn ordered_changes(mut changes: Vec<ChangeEntry>) -> Vec<ChangeEntry> {
@@ -341,7 +362,7 @@ fn action_for(kind: &ChangeKind) -> RollbackAction {
 }
 
 fn current_entry(root: &Path, rel: &str) -> Result<Option<ManifestEntry>> {
-    let path = root.join(rel);
+    let path = checked_path(root, rel)?;
     if !path.exists() && fs::symlink_metadata(&path).is_err() {
         return Ok(None);
     }
@@ -402,11 +423,12 @@ fn current_subtree(root: &Path, rel: &str) -> Result<BTreeMap<String, String>> {
 }
 
 fn preserve_conflict(root: &Path, conflict_root: &Path, rel: &str) -> Result<()> {
-    let src = root.join(rel);
+    let rel_path = checked_relative_path(rel)?;
+    let src = root.join(rel_path);
     if !src.exists() && fs::symlink_metadata(&src).is_err() {
         return Ok(());
     }
-    let dst = conflict_root.join(format!("{rel}.current"));
+    let dst = conflict_root.join(format!("{}.current", rel_path.to_string_lossy()));
     if let Some(parent) = dst.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -495,6 +517,10 @@ fn atomic_copy(src: &Path, target: &Path, mode: u32) -> Result<()> {
 }
 
 fn checked_path(root: &Path, rel: &str) -> Result<PathBuf> {
+    Ok(root.join(checked_relative_path(rel)?))
+}
+
+fn checked_relative_path(rel: &str) -> Result<&Path> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute()
         || rel_path
@@ -503,7 +529,7 @@ fn checked_path(root: &Path, rel: &str) -> Result<PathBuf> {
     {
         bail!("refusing path outside transaction root: {rel}");
     }
-    Ok(root.join(rel_path))
+    Ok(rel_path)
 }
 
 fn map_by_path(entries: &[ManifestEntry]) -> BTreeMap<String, ManifestEntry> {

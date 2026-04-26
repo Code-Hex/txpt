@@ -5,6 +5,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use similar::TextDiff;
 
 use crate::manifest::{EntryType, ManifestEntry};
 
@@ -201,18 +202,14 @@ pub fn write_patch(
     for change in changes {
         match change.kind {
             ChangeKind::ModifiedFile | ChangeKind::DeletedFile | ChangeKind::CreatedFile => {
-                if !change.text_diff_available {
-                    writeln!(
-                        file,
-                        "{} {}\n  binary or non-text change, before_size={:?}, after_size={:?}\n",
-                        status_letter(&change.kind),
-                        change.path,
-                        change.before_size,
-                        change.after_size
-                    )?;
+                let before_path = snapshot_root.join(&change.path);
+                let after_path = root.join(&change.path);
+                if !change.text_diff_available
+                    || !write_text_patch(&before_path, &after_path, &mut file, change)?
+                {
+                    write_binary_summary(&mut file, change)?;
                     continue;
                 }
-                write_text_patch(root, snapshot_root, &mut file, change)?;
             }
             ChangeKind::CreatedDir => {
                 writeln!(file, "A {}/\n", change.path)?;
@@ -232,28 +229,51 @@ pub fn write_patch(
 }
 
 fn write_text_patch(
-    root: &Path,
-    snapshot_root: &Path,
+    before_path: &Path,
+    after_path: &Path,
     writer: &mut File,
     change: &ChangeEntry,
-) -> Result<()> {
+) -> Result<bool> {
     let before = match change.kind {
         ChangeKind::CreatedFile => String::new(),
-        _ => fs::read_to_string(snapshot_root.join(&change.path)).unwrap_or_default(),
+        _ => match fs::read_to_string(before_path) {
+            Ok(text) => text,
+            Err(_) => return Ok(false),
+        },
     };
     let after = match change.kind {
         ChangeKind::DeletedFile => String::new(),
-        _ => fs::read_to_string(root.join(&change.path)).unwrap_or_default(),
+        _ => match fs::read_to_string(after_path) {
+            Ok(text) => text,
+            Err(_) => return Ok(false),
+        },
     };
-    writeln!(writer, "--- before/{}", change.path)?;
-    writeln!(writer, "+++ after/{}", change.path)?;
-    for line in before.lines() {
-        writeln!(writer, "-{line}")?;
+    let patch = TextDiff::from_lines(&before, &after)
+        .unified_diff()
+        .context_radius(3)
+        .header(
+            &format!("before/{}", change.path),
+            &format!("after/{}", change.path),
+        )
+        .to_string();
+    if patch.trim().is_empty() {
+        return Ok(false);
     }
-    for line in after.lines() {
-        writeln!(writer, "+{line}")?;
-    }
-    writeln!(writer)?;
+    writeln!(writer, "{patch}")?;
+    Ok(true)
+}
+
+fn write_binary_summary(writer: &mut File, change: &ChangeEntry) -> Result<()> {
+    writeln!(
+        writer,
+        "{} {}\n  binary or non-text change\n  before: size={:?} hash={:?}\n  after:  size={:?} hash={:?}\n",
+        status_letter(&change.kind),
+        change.path,
+        change.before_size,
+        change.before_hash,
+        change.after_size,
+        change.after_hash
+    )?;
     Ok(())
 }
 
