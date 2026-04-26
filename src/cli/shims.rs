@@ -116,28 +116,35 @@ fn update_ignore_rules(rules: &[String], add: bool) -> Result<i32> {
 fn edit_shim_policy() -> Result<i32> {
     let session_dir = active_session_dir()?;
     let path = session_dir.join("policy.json");
+    let edit_path = session_dir.join(format!("policy.json.edit-{}", storage::tx_id()));
+    fs::copy(&path, &edit_path)
+        .with_context(|| format!("failed to create editable policy {}", edit_path.display()))?;
     let mut editor = editor_command()?;
     let status = editor
-        .arg(&path)
+        .arg(&edit_path)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .status()
         .context("failed to launch editor")?;
     if !status.success() {
+        let _ = fs::remove_file(&edit_path);
         bail!("editor exited with {}", status.code().unwrap_or(1));
     }
-    let text = fs::read_to_string(&path)
-        .with_context(|| format!("failed to read edited policy {}", path.display()))?;
+    let text = fs::read_to_string(&edit_path)
+        .with_context(|| format!("failed to read edited policy {}", edit_path.display()))?;
     let policy = match serde_json::from_str::<SessionPolicy>(&text) {
         Ok(policy) => policy,
         Err(err) => {
             eprintln!(
-                "warning:\n  edited policy.json is invalid: {err}\n  shims were not regenerated."
+                "warning:\n  edited policy.json is invalid: {err}\n  live policy was left unchanged.\n  edited file: {}\n  shims were not regenerated.",
+                edit_path.display()
             );
             return Ok(74);
         }
     };
+    fs::rename(&edit_path, &path)
+        .with_context(|| format!("failed to replace policy {}", path.display()))?;
     write_shims(&session_dir.join("bin"), &policy)?;
     Ok(0)
 }

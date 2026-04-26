@@ -34,7 +34,7 @@ pub(crate) fn start() -> Result<i32> {
     prepare_shell_startup(&session_dir, &shell)?;
     eprintln!("txpt session started");
     eprintln!("root: {}", root.display());
-    eprintln!("mode: protected shell");
+    eprintln!("session: protected shell");
     eprintln!("shims: {}", shims::shim_commands(&policy).join(" "));
     eprintln!(
         "note: txpt is not a sandbox; absolute paths, shell redirections, and interpreter-driven file changes are outside session shims."

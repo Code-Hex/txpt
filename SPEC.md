@@ -179,7 +179,7 @@ Example:
 }
 ```
 
-`txpt shims protect`, `txpt shims unprotect`, `txpt shims ignore`, `txpt shims unignore`, and `txpt shims edit` update this policy. `txpt shims edit` requires an active session, opens `policy.json` with `$EDITOR`, and falls back to `vim`, `vi`, then `nano` when `$EDITOR` is unset. After editing, txpt validates the JSON and regenerates shims. If the edited JSON is invalid, txpt warns and leaves the existing shims unchanged. Shims read the policy each time they run, so changes apply without restarting the shell.
+`txpt shims protect`, `txpt shims unprotect`, `txpt shims ignore`, `txpt shims unignore`, and `txpt shims edit` update this policy. `txpt shims edit` requires an active session, copies `policy.json` to a temporary editable file, opens that file with `$EDITOR`, and falls back to `vim`, `vi`, then `nano` when `$EDITOR` is unset. After editing, txpt validates the JSON. If it is valid, txpt atomically replaces `policy.json` and regenerates shims. If it is invalid, txpt warns, leaves the live policy unchanged, and prints the temporary file path. Shims read the policy each time they run, so changes apply without restarting the shell.
 
 A txpt session protects selected external commands. It does not make shell builtins, redirections, pipelines, aliases, or functions transactional.
 

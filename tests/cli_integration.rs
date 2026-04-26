@@ -923,11 +923,8 @@ fn shims_edit_warns_on_invalid_policy_json() {
     let dir = TempDir::new().unwrap();
     let session = dir.path().join(".txpt/sessions/test");
     fs::create_dir_all(session.join("bin")).unwrap();
-    fs::write(
-        session.join("policy.json"),
-        r#"{"protect":["npm install:*"],"ignore":["npm test:*"]}"#,
-    )
-    .unwrap();
+    let original_policy = r#"{"protect":["npm install:*"],"ignore":["npm test:*"]}"#;
+    fs::write(session.join("policy.json"), original_policy).unwrap();
     let editor = dir.path().join("bad-editor");
     write_executable(&editor, "#!/bin/sh\nprintf '{not json' > \"$1\"\n");
 
@@ -940,7 +937,20 @@ fn shims_edit_warns_on_invalid_policy_json() {
         .code(74)
         .stderr(predicate::str::contains("warning:"))
         .stderr(predicate::str::contains("policy.json is invalid"))
+        .stderr(predicate::str::contains("live policy was left unchanged"))
+        .stderr(predicate::str::contains("policy.json.edit-"))
         .stderr(predicate::str::contains("shims were not regenerated"));
+    assert_eq!(
+        fs::read_to_string(session.join("policy.json")).unwrap(),
+        original_policy
+    );
+    assert!(fs::read_dir(&session).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with("policy.json.edit-")
+    }));
     assert!(!session.join("bin/npm").exists());
 }
 

@@ -53,7 +53,7 @@ txpt shims ls
 txpt shims edit
 ```
 
-`shims edit` requires an active txpt session. It uses `$EDITOR`, or falls back to `vim`, `vi`, then `nano`; after the editor exits, txpt validates `policy.json` and regenerates shims only when the JSON is valid.
+`shims edit` requires an active txpt session. It edits a temporary copy using `$EDITOR`, or falls back to `vim`, `vi`, then `nano`; after the editor exits, txpt validates the JSON, replaces `policy.json`, and regenerates shims only when the JSON is valid. Invalid edits leave the live policy unchanged and print the temporary file path.
 
 For zsh and bash, txpt makes a best-effort attempt to preserve shell functions such as `npm() { ... }` by wrapping that function inside the session. This is useful for existing package-manager wrappers, but it is not a shell compatibility guarantee.
 
