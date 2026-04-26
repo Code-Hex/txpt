@@ -63,12 +63,12 @@ fn clonefile(src: &Path, dst: &Path) -> io::Result<()> {
 
 #[cfg(target_os = "linux")]
 fn ficlone(src: &Path, dst: &Path) -> io::Result<()> {
-    let src = File::open(src)?;
-    let dst = File::create(dst)?;
+    let src_file = File::open(src)?;
+    let dst_file = File::create(dst)?;
     // SAFETY: ioctl is called with valid file descriptors. FICLONE does not
     // retain pointers, and the third argument is the source file descriptor as
     // required by ioctl_ficlonerange(2).
-    let rc = unsafe { libc::ioctl(dst.as_raw_fd(), FICLONE, src.as_raw_fd()) };
+    let rc = unsafe { libc::ioctl(dst_file.as_raw_fd(), FICLONE, src_file.as_raw_fd()) };
     if rc == 0 {
         Ok(())
     } else {
