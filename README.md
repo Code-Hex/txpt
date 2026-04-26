@@ -42,7 +42,7 @@ Session guards are controlled by `.txpt/sessions/<id>/policy.json`:
 ```json
 {
   "protect": ["npm install:*", "cargo update:*", "rm:*"],
-  "ignore": ["* --help", "* -h", "* --version", "* -v", "* version", "* help"]
+  "ignore": ["* --help", "* -h", "* --version", "* -v"]
 }
 ```
 

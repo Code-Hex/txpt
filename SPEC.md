@@ -119,8 +119,6 @@ rm:*
 * -h
 * --version
 * -v
-* version
-* help
 ```
 
 `*` matches any sequence of characters, including spaces. A trailing `:*` is treated like a trailing ` *`, matching the command prefix at a word boundary. For example, `npm install:*` matches `npm install` and `npm install zod`, but does not match `npm installer`.
@@ -135,8 +133,8 @@ truncate:* / patch:* / tee:* / rsync:* / dd:*
 # in-place editors
 sed:* -i:* / sed:* --in-place:* / perl:* -i:*
 
-# find / xargs destructive patterns
-find:* -delete:* / find:* -exec rm:* / find:* -execdir rm:* / xargs:* rm:*
+# find destructive patterns
+find:* -delete:* / find:* -exec rm:* / find:* -execdir rm:*
 
 # git workspace destructive
 git clean:* / git reset --hard:* / git restore:* / git checkout --:* / git rm:*
@@ -159,7 +157,7 @@ uv add:* / uv remove:* / uv sync:* / uv lock:*
 Default ignore rules cover command metadata checks:
 
 ```text
-* --help / * -h / * --version / * -v / * version / * help
+* --help / * -h / * --version / * -v
 ```
 
 Commands not matching a protect rule are left alone. If a command is installed during a session and should be protected, add it explicitly with `txpt shims protect "command:*"` or edit `policy.json`.
@@ -177,7 +175,7 @@ Example:
 ```json
 {
   "protect": ["npm install:*", "cargo update:*", "rm:*"],
-  "ignore": ["* --help", "* -h", "* --version", "* -v", "* version", "* help"]
+  "ignore": ["* --help", "* -h", "* --version", "* -v"]
 }
 ```
 

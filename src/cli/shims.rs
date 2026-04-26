@@ -351,7 +351,6 @@ pub(crate) fn default_session_policy() -> SessionPolicy {
             "find:* -delete:*".to_owned(),
             "find:* -exec rm:*".to_owned(),
             "find:* -execdir rm:*".to_owned(),
-            "xargs:* rm:*".to_owned(),
             "git clean:*".to_owned(),
             "git reset --hard:*".to_owned(),
             "git restore:*".to_owned(),
@@ -397,8 +396,6 @@ pub(crate) fn default_session_policy() -> SessionPolicy {
             "* -h".to_owned(),
             "* --version".to_owned(),
             "* -v".to_owned(),
-            "* version".to_owned(),
-            "* help".to_owned(),
         ],
     }
 }

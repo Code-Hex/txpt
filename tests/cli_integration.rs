@@ -625,7 +625,7 @@ fn shim_policy_matches_destructive_workspace_command_patterns() {
     fs::create_dir_all(&session).unwrap();
     fs::write(
         session.join("policy.json"),
-        r#"{"protect":["unlink:*","ln:*","truncate:*","patch:*","tee:*","rsync:*","dd:*","sed:* -i:*","sed:* --in-place:*","perl:* -i:*","find:* -delete:*","find:* -exec rm:*","find:* -execdir rm:*","xargs:* rm:*","git clean:*","git reset --hard:*","git checkout --:*","git restore:*","git rm:*","git apply:*","git stash pop:*","git stash apply:*","uv add:*","uv remove:*","uv sync:*","uv lock:*"],"ignore":["* --version"]}"#,
+        r#"{"protect":["unlink:*","ln:*","truncate:*","patch:*","tee:*","rsync:*","dd:*","sed:* -i:*","sed:* --in-place:*","perl:* -i:*","find:* -delete:*","find:* -exec rm:*","find:* -execdir rm:*","git clean:*","git reset --hard:*","git checkout --:*","git restore:*","git rm:*","git apply:*","git stash pop:*","git stash apply:*","uv add:*","uv remove:*","uv sync:*","uv lock:*"],"ignore":["* --version"]}"#,
     )
     .unwrap();
 
@@ -656,7 +656,6 @@ fn shim_policy_matches_destructive_workspace_command_patterns() {
         vec!["shim-should-wrap", "find", ".", "-delete"],
         vec!["shim-should-wrap", "find", ".", "-exec", "rm", "{}", ";"],
         vec!["shim-should-wrap", "find", ".", "-execdir", "rm", "{}", ";"],
-        vec!["shim-should-wrap", "xargs", "-0", "rm", "-f"],
         vec!["shim-should-wrap", "git", "clean", "-fd"],
         vec!["shim-should-wrap", "git", "reset", "--hard"],
         vec!["shim-should-wrap", "git", "checkout", "--", "file.txt"],
@@ -694,7 +693,7 @@ fn shim_policy_ignores_command_metadata_checks() {
     fs::create_dir_all(&session).unwrap();
     fs::write(
         session.join("policy.json"),
-        r#"{"protect":["git:*"],"ignore":["* --help","* -h","* --version","* -v","* version","* help"]}"#,
+        r#"{"protect":["git:*"],"ignore":["* --help","* -h","* --version","* -v"]}"#,
     )
     .unwrap();
 
@@ -703,6 +702,16 @@ fn shim_policy_ignores_command_metadata_checks() {
         vec!["shim-should-wrap", "git", "-h"],
         vec!["shim-should-wrap", "git", "--version"],
         vec!["shim-should-wrap", "git", "-v"],
+    ] {
+        let mut cmd = txpt();
+        cmd.current_dir(dir.path())
+            .env("TXPT_SESSION_DIR", &session)
+            .args(args)
+            .assert()
+            .code(1);
+    }
+
+    for args in [
         vec!["shim-should-wrap", "git", "version"],
         vec!["shim-should-wrap", "git", "help"],
     ] {
@@ -711,7 +720,7 @@ fn shim_policy_ignores_command_metadata_checks() {
             .env("TXPT_SESSION_DIR", &session)
             .args(args)
             .assert()
-            .code(1);
+            .success();
     }
 
     let mut destructive = txpt();
