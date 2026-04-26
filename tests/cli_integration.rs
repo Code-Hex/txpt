@@ -35,6 +35,31 @@ fn run_tx(root: &Path, script: &str) -> assert_cmd::assert::Assert {
     cmd.assert()
 }
 
+fn run_with_display_command(root: &Path, display_json: &str, script: &str) -> String {
+    let mut cmd = txpt();
+    let output = cmd
+        .current_dir(root)
+        .args([
+            "run",
+            "--root",
+            root.to_str().expect("utf8 temp path"),
+            "--snapshot",
+            "copy",
+            "--display-command",
+            display_json,
+            "--",
+            "sh",
+            "-c",
+            script,
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stderr
+        .clone();
+    String::from_utf8(output).unwrap()
+}
+
 fn run_interactive_txpt_session(
     root: &Path,
     extra_path: Option<&Path>,
@@ -269,91 +294,43 @@ fn shell_startup_commands_do_not_create_points() {
 fn run_receipt_warns_for_commands_with_partial_external_scope() {
     let dir = TempDir::new().unwrap();
 
-    let mut dd = txpt();
-    dd.current_dir(dir.path())
-        .args([
-            "run",
-            "--root",
-            dir.path().to_str().unwrap(),
-            "--snapshot",
-            "copy",
-            "--display-command",
-            r#"["dd","of=outside.img"]"#,
-            "--",
-            "sh",
-            "-c",
-            "printf x > touched.txt",
-        ])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "may modify files outside the transaction root",
-        ));
+    for (display, script) in [
+        (r#"["dd","of=outside.img"]"#, "printf dd > dd.txt"),
+        (
+            r#"["rsync","-a","src/","dst/"]"#,
+            "printf rsync > rsync.txt",
+        ),
+    ] {
+        let stderr = run_with_display_command(dir.path(), display, script);
+        assert!(stderr.contains("\nwarning:\n"), "{stderr}");
+        assert!(
+            stderr.contains(
+                "command may modify files outside the transaction root; txpt only restores protected workspace paths."
+            ),
+            "{stderr}"
+        );
+    }
 
-    let mut git = txpt();
-    git.current_dir(dir.path())
-        .args([
-            "run",
-            "--root",
-            dir.path().to_str().unwrap(),
-            "--snapshot",
-            "copy",
-            "--display-command",
-            r#"["git","stash","pop"]"#,
-            "--",
-            "sh",
-            "-c",
-            "printf y > git.txt",
-        ])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "txpt restores workspace files, not Git index",
-        ));
-
-    let mut git_restore_staged = txpt();
-    git_restore_staged
-        .current_dir(dir.path())
-        .args([
-            "run",
-            "--root",
-            dir.path().to_str().unwrap(),
-            "--snapshot",
-            "copy",
-            "--display-command",
+    for (display, script) in [
+        (r#"["git","stash","pop"]"#, "printf stash > git-stash.txt"),
+        (
             r#"["git","restore","--staged","file.txt"]"#,
-            "--",
-            "sh",
-            "-c",
-            "printf z > staged.txt",
-        ])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "txpt restores workspace files, not Git index",
-        ));
-
-    let mut git_rm_cached = txpt();
-    git_rm_cached
-        .current_dir(dir.path())
-        .args([
-            "run",
-            "--root",
-            dir.path().to_str().unwrap(),
-            "--snapshot",
-            "copy",
-            "--display-command",
+            "printf staged > git-staged.txt",
+        ),
+        (
             r#"["git","rm","--cached","file.txt"]"#,
-            "--",
-            "sh",
-            "-c",
-            "printf cached > cached.txt",
-        ])
-        .assert()
-        .success()
-        .stderr(predicate::str::contains(
-            "txpt restores workspace files, not Git index",
-        ));
+            "printf cached > git-cached.txt",
+        ),
+    ] {
+        let stderr = run_with_display_command(dir.path(), display, script);
+        assert!(stderr.contains("\nwarning:\n"), "{stderr}");
+        assert!(
+            stderr.contains(
+                "git command may modify .git state; txpt restores workspace files, not Git index, reflog, stash, or repository metadata."
+            ),
+            "{stderr}"
+        );
+    }
 }
 
 #[test]
@@ -969,6 +946,8 @@ fn shims_edit_warns_on_invalid_policy_json() {
     fs::create_dir_all(session.join("bin")).unwrap();
     let original_policy = r#"{"protect":["npm install:*"],"ignore":["npm test:*"]}"#;
     fs::write(session.join("policy.json"), original_policy).unwrap();
+    write_executable(&session.join("bin/npm"), "#!/bin/sh\nexit 99\n");
+    let original_shim = fs::read_to_string(session.join("bin/npm")).unwrap();
     let editor = dir.path().join("bad-editor");
     write_executable(&editor, "#!/bin/sh\nprintf '{not json' > \"$1\"\n");
 
@@ -988,14 +967,46 @@ fn shims_edit_warns_on_invalid_policy_json() {
         fs::read_to_string(session.join("policy.json")).unwrap(),
         original_policy
     );
-    assert!(fs::read_dir(&session).unwrap().any(|entry| {
-        entry
-            .unwrap()
-            .file_name()
-            .to_string_lossy()
-            .starts_with("policy.json.edit-")
-    }));
-    assert!(!session.join("bin/npm").exists());
+    let edit_paths = fs::read_dir(&session)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with("policy.json.edit-"))
+                .then_some(path)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(edit_paths.len(), 1);
+    assert_eq!(fs::read_to_string(&edit_paths[0]).unwrap(), "{not json");
+    assert_eq!(
+        fs::read_to_string(session.join("bin/npm")).unwrap(),
+        original_shim
+    );
+
+    let mut list = txpt();
+    list.current_dir(dir.path())
+        .env("TXPT_SESSION_DIR", &session)
+        .args(["shims", "ls"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("npm install:*"))
+        .stdout(predicate::str::contains("npm test:*"));
+
+    let mut should_wrap = txpt();
+    should_wrap
+        .current_dir(dir.path())
+        .env("TXPT_SESSION_DIR", &session)
+        .args(["shim-should-wrap", "npm", "install", "zod"])
+        .assert()
+        .success();
+
+    let mut ignored = txpt();
+    ignored
+        .current_dir(dir.path())
+        .env("TXPT_SESSION_DIR", &session)
+        .args(["shim-should-wrap", "npm", "test"])
+        .assert()
+        .code(1);
 }
 
 #[test]
@@ -1223,6 +1234,12 @@ fn reverted_points_are_popped_from_default_stack() {
     run_tx(dir.path(), "printf first-after > first.txt").success();
     std::thread::sleep(std::time::Duration::from_millis(10));
     run_tx(dir.path(), "printf second > second.txt").success();
+    let initial_ids = txpt::storage::list_tx_ids(dir.path()).unwrap();
+    assert_eq!(initial_ids.len(), 2);
+    let latest_id = initial_ids[0].clone();
+    let previous_id = initial_ids[1].clone();
+    assert!(dir.path().join(".txpt/tx").join(&latest_id).exists());
+    assert!(dir.path().join(".txpt/tx").join(&previous_id).exists());
 
     let mut undo_latest = txpt();
     undo_latest
@@ -1230,7 +1247,16 @@ fn reverted_points_are_popped_from_default_stack() {
         .arg("undo")
         .assert()
         .success();
-    assert_eq!(tx_ids(dir.path()).len(), 1);
+    assert!(!dir.path().join(".txpt/tx").join(&latest_id).exists());
+    assert!(dir.path().join(".txpt/tx").join(&previous_id).exists());
+    assert_eq!(
+        txpt::storage::resolve_tx_id(dir.path(), None).unwrap(),
+        previous_id
+    );
+    assert_eq!(
+        txpt::storage::list_tx_ids(dir.path()).unwrap(),
+        vec![previous_id.clone()]
+    );
 
     let mut list = txpt();
     list.current_dir(dir.path())
@@ -1247,6 +1273,9 @@ fn reverted_points_are_popped_from_default_stack() {
         .args(["show", "@last"])
         .assert()
         .success()
+        .stdout(predicate::str::contains(format!(
+            "txpt @last  {previous_id}"
+        )))
         .stdout(predicate::str::contains("first.txt"))
         .stdout(predicate::str::contains("state: undoable"));
 
@@ -1262,6 +1291,8 @@ fn reverted_points_are_popped_from_default_stack() {
     );
     assert!(!dir.path().join("second.txt").exists());
     assert!(tx_ids(dir.path()).is_empty());
+    assert!(!dir.path().join(".txpt/tx").join(&previous_id).exists());
+    assert!(txpt::storage::resolve_tx_id(dir.path(), None).is_err());
 }
 
 #[test]
