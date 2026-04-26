@@ -51,20 +51,6 @@ fn created_file_is_removed() {
 }
 
 #[test]
-fn double_dash_is_run_shorthand() {
-    let dir = TempDir::new().unwrap();
-    let mut cmd = txpt();
-    cmd.current_dir(dir.path())
-        .args(["--", "sh", "-c", "printf ok > shorthand.txt"])
-        .assert()
-        .success();
-    assert_eq!(
-        fs::read_to_string(dir.path().join("shorthand.txt")).unwrap(),
-        "ok"
-    );
-}
-
-#[test]
 fn shell_mode_runs_redirection_inside_child_shell() {
     let dir = TempDir::new().unwrap();
     let mut cmd = txpt();
@@ -109,6 +95,35 @@ fn shell_mode_can_expand_aliases_defined_in_shell_command() {
         fs::read_to_string(dir.path().join("alias.txt")).unwrap(),
         "aliased"
     );
+}
+
+#[test]
+fn unknown_subcommand_is_usage_error_not_implicit_run() {
+    let dir = TempDir::new().unwrap();
+    let mut cmd = txpt();
+    cmd.current_dir(dir.path())
+        .arg("dpctpr")
+        .assert()
+        .code(64)
+        .stderr(predicate::str::contains("unknown subcommand dpctpr"))
+        .stderr(predicate::str::contains("usage:"))
+        .stderr(predicate::str::contains("txpt run [options] -- <cmd>"));
+
+    let tx_root = dir.path().join(".txpt/tx");
+    assert!(!tx_root.exists());
+}
+
+#[test]
+fn top_level_double_dash_is_usage_error() {
+    let dir = TempDir::new().unwrap();
+    let mut cmd = txpt();
+    cmd.current_dir(dir.path())
+        .args(["--", "sh", "-c", "printf bad > file.txt"])
+        .assert()
+        .code(64)
+        .stderr(predicate::str::contains("unknown subcommand --"))
+        .stderr(predicate::str::contains("usage:"));
+    assert!(!dir.path().join("file.txt").exists());
 }
 
 #[test]

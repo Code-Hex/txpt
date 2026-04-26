@@ -75,9 +75,6 @@ pub fn run(args: Vec<String>) -> Result<i32> {
         print_help();
         return Ok(0);
     }
-    if args[0] == "--" {
-        return run_command(parse_run(args[1..].to_vec())?);
-    }
     match args[0].as_str() {
         "run" => run_command(parse_run(args[1..].to_vec())?),
         "diff" => show_diff(args[1..].to_vec()),
@@ -91,12 +88,10 @@ pub fn run(args: Vec<String>) -> Result<i32> {
             print_help();
             Ok(0)
         }
-        _ => {
-            let mut run_args = args;
-            if run_args.first().is_some_and(|arg| arg == "--") {
-                run_args.remove(0);
-            }
-            run_command(parse_run(run_args)?)
+        other => {
+            eprintln!("txpt: unknown subcommand {other}\n");
+            print_help();
+            Ok(64)
         }
     }
 }
@@ -168,7 +163,7 @@ fn run_command(opts: RunOptions) -> Result<i32> {
         && opts.snapshot != SnapshotMode::Off
     {
         eprintln!(
-            "refusing sudo command under rollback mode\n\nreason:\n  txpt can only roll back protected paths inside the transaction root.\n\nuse:\n  txpt --snapshot off -- sudo make install"
+            "refusing sudo command under rollback mode\n\nreason:\n  txpt can only roll back protected paths inside the transaction root.\n\nuse:\n  txpt run --snapshot off -- sudo make install"
         );
         return Ok(82);
     }
@@ -850,7 +845,7 @@ fn home_child(name: &str) -> PathBuf {
 
 fn print_help() {
     eprintln!(
-        "txpt creates reversible transaction points around Unix commands\n\nusage:\n  txpt -- <cmd> [args...]\n  txpt run [options] -- <cmd> [args...]\n  txpt run [options] --shell '<shell command>'\n  txpt diff [TX_ID]\n  txpt undo [TX_ID] [--dry-run] [--force] [--json]\n  txpt list\n  txpt show [TX_ID]\n  txpt prune\n  txpt doctor\n  txpt inspect --json"
+        "txpt creates reversible transaction points around Unix commands\n\nusage:\n  txpt run [options] -- <cmd> [args...]\n  txpt run [options] --shell '<shell command>'\n  txpt diff [TX_ID]\n  txpt undo [TX_ID] [--dry-run] [--force] [--json]\n  txpt list\n  txpt show [TX_ID]\n  txpt prune\n  txpt doctor\n  txpt inspect --json"
     );
 }
 

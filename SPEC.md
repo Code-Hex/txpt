@@ -15,7 +15,6 @@
 ## CLI
 
 ```sh
-txpt -- <cmd> [args...]
 txpt run -- <cmd> [args...]
 txpt run --shell '<shell command>'
 txpt diff [TX_ID]
@@ -30,7 +29,7 @@ txpt doctor
 txpt inspect --json
 ```
 
-`txpt -- <cmd>` is shorthand for `txpt run -- <cmd>`.
+Commands must be run explicitly through `txpt run`. `txpt` does not treat unknown top-level subcommands as commands to execute. This keeps subcommand typos from creating broken transaction records.
 
 Use `txpt run --shell '<shell command>'` when the command intentionally needs shell parsing, such as redirects, pipes, glob expansion, shell functions, or aliases. Shell mode runs `$SHELL -ic <command>` so aliases from an interactive shell setup can work. Direct exec remains the default because it preserves argv exactly and avoids shell startup side effects.
 

@@ -3,7 +3,7 @@
 `txpt` creates reversible transaction points around Unix commands.
 
 ```sh
-txpt -- npm install zod
+txpt run -- npm install zod
 txpt run --shell 'npm install zod > npm.log'
 txpt list
 txpt show @last
