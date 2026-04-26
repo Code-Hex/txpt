@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
@@ -28,6 +28,12 @@ pub struct ChangeEntry {
     pub guarantee: String,
     pub before_hash: Option<String>,
     pub after_hash: Option<String>,
+    #[serde(default)]
+    pub before_size: Option<u64>,
+    #[serde(default)]
+    pub after_size: Option<u64>,
+    #[serde(default)]
+    pub text_diff_available: bool,
 }
 
 pub fn diff(before: &[ManifestEntry], after: &[ManifestEntry]) -> Vec<ChangeEntry> {
@@ -50,14 +56,22 @@ pub fn diff(before: &[ManifestEntry], after: &[ManifestEntry]) -> Vec<ChangeEntr
     changes
 }
 
+pub fn mark_record_only(changes: &mut [ChangeEntry]) {
+    for change in changes {
+        change.rollback = "none".to_owned();
+        change.guarantee = "record_only".to_owned();
+        change.text_diff_available = false;
+    }
+}
+
 fn diff_one(
     path: &str,
     old: Option<&ManifestEntry>,
     new: Option<&ManifestEntry>,
 ) -> Option<ChangeEntry> {
     if old.is_some_and(|entry| !entry.protected) || new.is_some_and(|entry| !entry.protected) {
-        let old_state = old.map(ManifestEntry::comparable_state);
-        let new_state = new.map(ManifestEntry::comparable_state);
+        let old_state = old.map(ManifestEntry::observable_state);
+        let new_state = new.map(ManifestEntry::observable_state);
         if old_state != new_state {
             return Some(ChangeEntry {
                 path: path.to_owned(),
@@ -66,6 +80,9 @@ fn diff_one(
                 guarantee: "unprotected".to_owned(),
                 before_hash: old.and_then(|entry| entry.hash.clone()),
                 after_hash: new.and_then(|entry| entry.hash.clone()),
+                before_size: old.map(|entry| entry.size),
+                after_size: new.map(|entry| entry.size),
+                text_diff_available: false,
             });
         }
         return None;
@@ -87,6 +104,9 @@ fn diff_one(
                 guarantee: guarantee.to_owned(),
                 before_hash: None,
                 after_hash: new.hash.clone(),
+                before_size: None,
+                after_size: Some(new.size),
+                text_diff_available: new.entry_type == EntryType::File,
             })
         }
         (Some(old), None) => Some(ChangeEntry {
@@ -96,6 +116,9 @@ fn diff_one(
             guarantee: "full".to_owned(),
             before_hash: old.hash.clone(),
             after_hash: None,
+            before_size: Some(old.size),
+            after_size: None,
+            text_diff_available: old.entry_type == EntryType::File,
         }),
         (Some(old), Some(new)) if old.entry_type != new.entry_type => Some(ChangeEntry {
             path: path.to_owned(),
@@ -104,6 +127,10 @@ fn diff_one(
             guarantee: "full".to_owned(),
             before_hash: old.hash.clone(),
             after_hash: new.hash.clone(),
+            before_size: Some(old.size),
+            after_size: Some(new.size),
+            text_diff_available: old.entry_type == EntryType::File
+                && new.entry_type == EntryType::File,
         }),
         (Some(old), Some(new))
             if old.hash != new.hash || old.symlink_target != new.symlink_target =>
@@ -115,6 +142,10 @@ fn diff_one(
                 guarantee: "full".to_owned(),
                 before_hash: old.hash.clone(),
                 after_hash: new.hash.clone(),
+                before_size: Some(old.size),
+                after_size: Some(new.size),
+                text_diff_available: old.entry_type == EntryType::File
+                    && new.entry_type == EntryType::File,
             })
         }
         (Some(old), Some(new)) if old.mode != new.mode => Some(ChangeEntry {
@@ -124,6 +155,9 @@ fn diff_one(
             guarantee: "metadata_partial".to_owned(),
             before_hash: old.hash.clone(),
             after_hash: new.hash.clone(),
+            before_size: Some(old.size),
+            after_size: Some(new.size),
+            text_diff_available: false,
         }),
         _ => None,
     }
@@ -155,4 +189,79 @@ pub fn read_jsonl(path: &Path) -> Result<Vec<ChangeEntry>> {
         }
     }
     Ok(changes)
+}
+
+pub fn write_patch(
+    root: &Path,
+    snapshot_root: &Path,
+    patch_path: &Path,
+    changes: &[ChangeEntry],
+) -> Result<()> {
+    let mut file = File::create(patch_path)?;
+    for change in changes {
+        match change.kind {
+            ChangeKind::ModifiedFile | ChangeKind::DeletedFile | ChangeKind::CreatedFile => {
+                if !change.text_diff_available {
+                    writeln!(
+                        file,
+                        "{} {}\n  binary or non-text change, before_size={:?}, after_size={:?}\n",
+                        status_letter(&change.kind),
+                        change.path,
+                        change.before_size,
+                        change.after_size
+                    )?;
+                    continue;
+                }
+                write_text_patch(root, snapshot_root, &mut file, change)?;
+            }
+            ChangeKind::CreatedDir => {
+                writeln!(file, "A {}/\n", change.path)?;
+            }
+            ChangeKind::MetadataChanged | ChangeKind::TypeChanged | ChangeKind::Unprotected => {
+                writeln!(
+                    file,
+                    "{} {}\n  rollback: {}\n",
+                    status_letter(&change.kind),
+                    change.path,
+                    change.guarantee
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn write_text_patch(
+    root: &Path,
+    snapshot_root: &Path,
+    writer: &mut File,
+    change: &ChangeEntry,
+) -> Result<()> {
+    let before = match change.kind {
+        ChangeKind::CreatedFile => String::new(),
+        _ => fs::read_to_string(snapshot_root.join(&change.path)).unwrap_or_default(),
+    };
+    let after = match change.kind {
+        ChangeKind::DeletedFile => String::new(),
+        _ => fs::read_to_string(root.join(&change.path)).unwrap_or_default(),
+    };
+    writeln!(writer, "--- before/{}", change.path)?;
+    writeln!(writer, "+++ after/{}", change.path)?;
+    for line in before.lines() {
+        writeln!(writer, "-{line}")?;
+    }
+    for line in after.lines() {
+        writeln!(writer, "+{line}")?;
+    }
+    writeln!(writer)?;
+    Ok(())
+}
+
+pub fn status_letter(kind: &ChangeKind) -> &'static str {
+    match kind {
+        ChangeKind::CreatedFile | ChangeKind::CreatedDir => "A",
+        ChangeKind::DeletedFile => "D",
+        ChangeKind::ModifiedFile | ChangeKind::MetadataChanged | ChangeKind::TypeChanged => "M",
+        ChangeKind::Unprotected => "!",
+    }
 }

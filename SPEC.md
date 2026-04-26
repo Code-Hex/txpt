@@ -19,9 +19,12 @@ txpt -- <cmd> [args...]
 txpt run -- <cmd> [args...]
 txpt run --shell '<shell command>'
 txpt diff [TX_ID]
+txpt diff [TX_ID] --stat
+txpt diff [TX_ID] --name-status
+txpt diff [TX_ID] --json
 txpt undo [TX_ID]
-txpt show [TX_ID]
-txpt list
+txpt show [TX_ID] [--json]
+txpt list [--ids]
 txpt prune
 txpt doctor
 txpt inspect --json
@@ -30,6 +33,13 @@ txpt inspect --json
 `txpt -- <cmd>` is shorthand for `txpt run -- <cmd>`.
 
 Use `txpt run --shell '<shell command>'` when the command intentionally needs shell parsing, such as redirects, pipes, glob expansion, shell functions, or aliases. Shell mode runs `$SHELL -ic <command>` so aliases from an interactive shell setup can work. Direct exec remains the default because it preserves argv exactly and avoids shell startup side effects.
+
+Transaction selectors are accepted anywhere a transaction id is accepted:
+
+- `@last`: newest transaction
+- `@1`: one transaction before newest
+- `@2`: two transactions before newest
+- raw transaction id
 
 `run` accepts:
 
@@ -101,7 +111,9 @@ Transactions are stored as:
     snapshot/
     stdout.log
     stderr.log
+    diff.patch
     rollback.log
+    rollback.json
   tmp/
   locks/
   conflicts/
@@ -143,6 +155,8 @@ Rollback mode refuses `sudo` unless `--snapshot off` is used.
 
 Only paths whose current state still matches the recorded after-state are rolled back. Paths changed after the transaction are conflicts. By default conflicts are not overwritten.
 
+Rollback is planned before it is applied. `txpt undo --dry-run` prints the plan and does not modify the workspace. If any conflict exists, default `txpt undo` does not modify any path and exits with code 80. Partial rollback requires an explicit future option; v0.1 does not apply partial rollback by default.
+
 With `--force`, conflicted current files are preserved under:
 
 ```text
@@ -152,13 +166,39 @@ With `--force`, conflicted current files are preserved under:
 Rollback behavior:
 
 - `created_file`: delete if current hash matches after hash
-- `created_dir`: delete if recorded tree still matches
+- `created_dir`: delete only if the full current subtree exactly matches the recorded after subtree
 - `modified_file`: atomic replace from snapshot if current hash matches after hash
 - `deleted_file`: restore from snapshot if still absent
 - `type_changed`: restore snapshot if current type matches after type
 - `renamed`: represented as `deleted_file + created_file` in v0.1
 
 Symlinks are restored as symlinks. txpt never follows symlinks during rollback.
+
+`--snapshot off` records the transaction without preimage snapshots. Such transactions use `record_only` rollback guarantee and `txpt undo` refuses them with exit code 81.
+
+## Diff And Readiness UI
+
+`txpt list` shows rollback readiness by default:
+
+```text
+ID        AGE        STATE      EXIT  CHANGES      COMMAND
+@last     2m         undoable   0     ~2 +1 -0 !0 npm install zod
+@1        8m         conflict   0     ~1 +3 -0 !1 cargo update
+```
+
+`txpt list --ids` prints raw transaction ids only.
+
+`txpt show` reads `meta.json`, `command.json`, `changes.jsonl`, and the rollback plan to render a transaction card. `txpt show --json` prints the same structured view as JSON.
+
+`txpt diff` combines transaction diff and current rollback status. `txpt diff --stat`, `txpt diff --name-status`, and `txpt diff --json` provide narrower output modes. A text-oriented `diff.patch` is written at run time for later display.
+
+## Manifest Security
+
+Sensitive files are excluded from rollback by default and are not content-hashed in the manifest. txpt records observable metadata such as size and mtime so sensitive changes can still appear as unprotected changes.
+
+Large protected files are hashed with streaming BLAKE3 rather than reading the whole file into memory.
+
+Ignored directories are recorded as unprotected subtree entries, but txpt does not descend into them by default.
 
 ## Exit Codes
 
@@ -200,7 +240,8 @@ If snapshot creation fails, the child command is not executed. If the child fail
     "metadata_partial",
     "conflict",
     "unprotected",
-    "unsupported"
+    "unsupported",
+    "record_only"
   ]
 }
 ```

@@ -69,23 +69,47 @@ pub fn tx_paths(root: &Path, id: &str) -> Result<TxPaths> {
 }
 
 pub fn latest_tx_id(root: &Path) -> Result<String> {
+    let Some(id) = list_tx_ids(root)?.into_iter().next() else {
+        bail!("no transactions recorded");
+    };
+    Ok(id)
+}
+
+pub fn list_tx_ids(root: &Path) -> Result<Vec<String>> {
     let tx_root = state_dir(root).join("tx");
     let mut entries = fs::read_dir(&tx_root)
         .with_context(|| format!("no transaction directory at {}", tx_root.display()))?
         .collect::<std::io::Result<Vec<_>>>()?;
     entries.retain(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()));
-    entries.sort_by_key(|entry| entry.file_name());
-    let Some(entry) = entries.pop() else {
-        bail!("no transactions recorded");
-    };
-    Ok(entry.file_name().to_string_lossy().into_owned())
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
+    Ok(entries
+        .into_iter()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect())
+}
+
+pub fn resolve_tx_id(root: &Path, selector: Option<&str>) -> Result<String> {
+    let ids = list_tx_ids(root)?;
+    match selector {
+        None | Some("@last") => ids
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("no transactions recorded")),
+        Some(value) if value.starts_with('@') => {
+            let index = value
+                .trim_start_matches('@')
+                .parse::<usize>()
+                .with_context(|| format!("invalid transaction selector {value}"))?;
+            ids.get(index)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("transaction selector {value} is out of range"))
+        }
+        Some(id) => Ok(id.to_owned()),
+    }
 }
 
 pub fn existing_tx_paths(root: &Path, id: Option<&str>) -> Result<TxPaths> {
-    let id = match id {
-        Some(id) => id.to_owned(),
-        None => latest_tx_id(root)?,
-    };
+    let id = resolve_tx_id(root, id)?;
     let state = state_dir(root);
     let tx_dir = state.join("tx").join(id);
     Ok(TxPaths {

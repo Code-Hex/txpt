@@ -5,10 +5,10 @@
 ```sh
 txpt -- npm install zod
 txpt run --shell 'npm install zod > npm.log'
+txpt list
+txpt show @last
 txpt diff
 txpt undo
-txpt list
-txpt show
 txpt prune
 txpt inspect --json
 ```

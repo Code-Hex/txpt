@@ -9,7 +9,7 @@ pub struct InspectReport {
     pub schema_version: u8,
     pub capabilities: Capabilities,
     pub snapshot_engines: [&'static str; 4],
-    pub rollback_guarantees: [&'static str; 6],
+    pub rollback_guarantees: [&'static str; 7],
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +43,7 @@ pub fn inspect_report() -> InspectReport {
             "conflict",
             "unprotected",
             "unsupported",
+            "record_only",
         ],
     }
 }

@@ -1,5 +1,5 @@
 use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -40,11 +40,19 @@ impl ManifestEntry {
             self.entry_type, self.hash, self.symlink_target, self.mode
         )
     }
+
+    pub fn observable_state(&self) -> String {
+        format!(
+            "{:?}:{:?}:{}:{}:{}",
+            self.entry_type, self.symlink_target, self.mode, self.size, self.mtime_ns
+        )
+    }
 }
 
 pub fn scan(root: &Path, policy: &Policy) -> Result<Vec<ManifestEntry>> {
     let mut entries = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false) {
+    let mut walker = WalkDir::new(root).follow_links(false).into_iter();
+    while let Some(entry) = walker.next() {
         let entry = entry?;
         if entry.path() == root {
             continue;
@@ -59,6 +67,9 @@ pub fn scan(root: &Path, policy: &Policy) -> Result<Vec<ManifestEntry>> {
             continue;
         }
         entries.push(entry_for(root, &rel, protection == Protection::Protected)?);
+        if entry.file_type().is_dir() && !policy.should_descend(entry.path()) {
+            walker.skip_current_dir();
+        }
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(entries)
@@ -78,11 +89,9 @@ pub fn entry_for(root: &Path, rel: &str, protected: bool) -> Result<ManifestEntr
     } else {
         EntryType::Other
     };
-    let hash = if entry_type == EntryType::File {
-        Some(format!(
-            "blake3:{}",
-            blake3::hash(&fs::read(&path)?).to_hex()
-        ))
+    let sensitive = is_sensitive_name(Path::new(rel));
+    let hash = if entry_type == EntryType::File && protected && !sensitive {
+        Some(format!("blake3:{}", hash_file(&path)?))
     } else {
         None
     };
@@ -99,7 +108,7 @@ pub fn entry_for(root: &Path, rel: &str, protected: bool) -> Result<ManifestEntr
         mtime_ns: i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()),
         hash,
         symlink_target,
-        sensitive: is_sensitive_name(Path::new(rel)),
+        sensitive,
         protected,
     })
 }
@@ -161,4 +170,18 @@ fn is_sensitive_name(rel: &Path) -> bool {
         || name == ".npmrc"
         || name == ".pypirc"
         || name == ".netrc"
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    let mut file = File::open(path)?;
+    let mut hasher = blake3::Hasher::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hasher.finalize().to_hex().to_string())
 }
