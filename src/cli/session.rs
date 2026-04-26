@@ -1,6 +1,7 @@
 use std::env;
+use std::ffi::OsString;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::Result;
@@ -28,8 +29,7 @@ pub(crate) fn start() -> Result<i32> {
     shims::write_shims(&bin_dir, &policy)?;
 
     let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
-    let old_path = env::var_os("PATH").unwrap_or_default();
-    let new_path = format!("{}:{}", bin_dir.display(), old_path.to_string_lossy());
+    let new_path = session_path(&bin_dir)?;
     prepare_shell_startup(&session_dir, &shell)?;
     eprintln!("txpt session started");
     eprintln!("root: {}", root.display());
@@ -51,6 +51,23 @@ pub(crate) fn start() -> Result<i32> {
         .stderr(Stdio::inherit())
         .status()?;
     Ok(status.code().unwrap_or(0))
+}
+
+fn session_path(bin_dir: &Path) -> Result<OsString> {
+    let mut paths = vec![bin_dir.to_path_buf()];
+    if let Some(exe_dir) = env::current_exe()?.parent().map(Path::to_path_buf) {
+        add_path(&mut paths, exe_dir);
+    }
+    for path in env::split_paths(&env::var_os("PATH").unwrap_or_default()) {
+        add_path(&mut paths, path);
+    }
+    Ok(env::join_paths(paths)?)
+}
+
+fn add_path(paths: &mut Vec<PathBuf>, path: PathBuf) {
+    if !paths.iter().any(|existing| existing == &path) {
+        paths.push(path);
+    }
 }
 
 pub(crate) fn dashboard() -> Result<i32> {
