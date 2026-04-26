@@ -12,6 +12,8 @@ txpt undo
 
 It uses your real shell, wraps selected external commands with undo points, and reports what can and cannot be rolled back.
 
+https://github.com/user-attachments/assets/a87e99ac-e805-4c07-ae32-bfa974072ff8
+
 It protects common workspace-mutating commands such as `rm`, `mv`, `cp`, `npm install`, `cargo update`, `sed -i`, and selected Git cleanup commands. Some default guards, including `dd`, `rsync`, and Git cleanup commands, may still have side effects outside txpt's rollback guarantee; txpt warns about those in the command receipt.
 
 It is not a sandbox. It does not protect `/bin/rm`, `command rm`, shell redirections, interpreter-driven file deletion, sudo changes, files outside the root, or external services.
