@@ -65,6 +65,53 @@ fn double_dash_is_run_shorthand() {
 }
 
 #[test]
+fn shell_mode_runs_redirection_inside_child_shell() {
+    let dir = TempDir::new().unwrap();
+    let mut cmd = txpt();
+    cmd.current_dir(dir.path())
+        .args([
+            "run",
+            "--root",
+            dir.path().to_str().unwrap(),
+            "--snapshot",
+            "copy",
+            "--shell",
+            "printf shell-output > redirected.txt",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join("redirected.txt")).unwrap(),
+        "shell-output"
+    );
+}
+
+#[test]
+fn shell_mode_can_expand_aliases_defined_in_shell_command() {
+    let dir = TempDir::new().unwrap();
+    let mut cmd = txpt();
+    cmd.current_dir(dir.path())
+        .env("SHELL", "/bin/sh")
+        .args([
+            "run",
+            "--root",
+            dir.path().to_str().unwrap(),
+            "--snapshot",
+            "copy",
+            "--shell",
+            "alias txpt_write='printf aliased > alias.txt'\ntxpt_write",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        fs::read_to_string(dir.path().join("alias.txt")).unwrap(),
+        "aliased"
+    );
+}
+
+#[test]
 fn deleted_file_is_restored() {
     let dir = TempDir::new().unwrap();
     let file = dir.path().join("gone.txt");

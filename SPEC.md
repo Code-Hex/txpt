@@ -17,6 +17,7 @@
 ```sh
 txpt -- <cmd> [args...]
 txpt run -- <cmd> [args...]
+txpt run --shell '<shell command>'
 txpt diff [TX_ID]
 txpt undo [TX_ID]
 txpt show [TX_ID]
@@ -28,10 +29,13 @@ txpt inspect --json
 
 `txpt -- <cmd>` is shorthand for `txpt run -- <cmd>`.
 
+Use `txpt run --shell '<shell command>'` when the command intentionally needs shell parsing, such as redirects, pipes, glob expansion, shell functions, or aliases. Shell mode runs `$SHELL -ic <command>` so aliases from an interactive shell setup can work. Direct exec remains the default because it preserves argv exactly and avoids shell startup side effects.
+
 `run` accepts:
 
 - `--root <path>`
 - `--snapshot auto|clone|copy|off`
+- `--shell '<shell command>'`
 - `--json`
 - `--no-stream`
 - `--include-ignored`

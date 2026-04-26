@@ -26,6 +26,7 @@ struct RunOptions {
     include_sensitive: bool,
     strict: bool,
     keep: bool,
+    shell_command: Option<String>,
     argv: Vec<String>,
 }
 
@@ -108,6 +109,7 @@ fn parse_run(args: Vec<String>) -> Result<RunOptions> {
         include_sensitive: false,
         strict: false,
         keep: false,
+        shell_command: None,
         argv: Vec::new(),
     };
     let mut i = 0;
@@ -137,6 +139,11 @@ fn parse_run(args: Vec<String>) -> Result<RunOptions> {
             "--include-sensitive" => opts.include_sensitive = true,
             "--strict" => opts.strict = true,
             "--keep" => opts.keep = true,
+            "--shell" => {
+                let command = parse_shell_command(&args, i + 1)?;
+                opts.shell_command = Some(command);
+                break;
+            }
             other => {
                 opts.argv = args[i..].to_vec();
                 if other.starts_with('-') {
@@ -147,14 +154,17 @@ fn parse_run(args: Vec<String>) -> Result<RunOptions> {
         }
         i += 1;
     }
-    if opts.argv.is_empty() {
+    if opts.argv.is_empty() && opts.shell_command.is_none() {
         bail!("missing command");
     }
     Ok(opts)
 }
 
 fn run_command(opts: RunOptions) -> Result<i32> {
-    if opts.argv.first().is_some_and(|arg| arg == "sudo") && opts.snapshot != SnapshotMode::Off {
+    let command = command_to_run(&opts)?;
+    if command_uses_sudo(&command.argv, opts.shell_command.as_deref())
+        && opts.snapshot != SnapshotMode::Off
+    {
         eprintln!(
             "refusing sudo command under rollback mode\n\nreason:\n  txpt can only roll back protected paths inside the transaction root.\n\nuse:\n  txpt --snapshot off -- sudo make install"
         );
@@ -178,7 +188,7 @@ fn run_command(opts: RunOptions) -> Result<i32> {
     }
     let started_at = timestamp();
     let output = runner::run_child(
-        &opts.argv,
+        &command.argv,
         &cwd,
         &paths.tx_dir.join("stdout.log"),
         &paths.tx_dir.join("stderr.log"),
@@ -191,7 +201,7 @@ fn run_command(opts: RunOptions) -> Result<i32> {
     let report = build_report(
         &id,
         &root,
-        &opts.argv,
+        &command.display_argv,
         output.exit_code,
         engine.name(),
         &changes,
@@ -217,12 +227,12 @@ fn run_command(opts: RunOptions) -> Result<i32> {
     storage::write_json(
         &paths.tx_dir.join("command.json"),
         &CommandMeta {
-            argv: opts.argv.clone(),
+            argv: command.display_argv.clone(),
             uid: unsafe_getuid(),
             gid: unsafe_getgid(),
             env_redacted: true,
             pid: output.pid,
-            shell: None,
+            shell: command.shell.clone(),
         },
     )?;
     if opts.json {
@@ -231,6 +241,53 @@ fn run_command(opts: RunOptions) -> Result<i32> {
         print_human_report(&report);
     }
     Ok(output.exit_code)
+}
+
+#[derive(Debug)]
+struct CommandToRun {
+    argv: Vec<String>,
+    display_argv: Vec<String>,
+    shell: Option<String>,
+}
+
+fn parse_shell_command(args: &[String], start: usize) -> Result<String> {
+    if start >= args.len() {
+        bail!("--shell requires a command string");
+    }
+    if args[start] == "--" {
+        let parts = &args[start + 1..];
+        if parts.is_empty() {
+            bail!("--shell -- requires a command");
+        }
+        return Ok(parts.join(" "));
+    }
+    Ok(args[start..].join(" "))
+}
+
+fn command_to_run(opts: &RunOptions) -> Result<CommandToRun> {
+    let Some(shell_command) = &opts.shell_command else {
+        return Ok(CommandToRun {
+            argv: opts.argv.clone(),
+            display_argv: opts.argv.clone(),
+            shell: None,
+        });
+    };
+    let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_owned());
+    if shell_command.trim().is_empty() {
+        bail!("--shell command must not be empty");
+    }
+    Ok(CommandToRun {
+        argv: vec![shell.clone(), "-ic".to_owned(), shell_command.clone()],
+        display_argv: vec![shell_command.clone()],
+        shell: Some(shell),
+    })
+}
+
+fn command_uses_sudo(argv: &[String], shell_command: Option<&str>) -> bool {
+    if let Some(command) = shell_command {
+        return command.trim_start().starts_with("sudo ");
+    }
+    argv.first().is_some_and(|arg| arg == "sudo")
 }
 
 fn show_diff(id: Option<&str>) -> Result<i32> {
@@ -442,7 +499,7 @@ fn home_child(name: &str) -> PathBuf {
 
 fn print_help() {
     eprintln!(
-        "txpt creates reversible transaction points around Unix commands\n\nusage:\n  txpt -- <cmd> [args...]\n  txpt run [options] -- <cmd> [args...]\n  txpt diff [TX_ID]\n  txpt undo [TX_ID] [--dry-run] [--force] [--json]\n  txpt list\n  txpt show [TX_ID]\n  txpt prune\n  txpt doctor\n  txpt inspect --json"
+        "txpt creates reversible transaction points around Unix commands\n\nusage:\n  txpt -- <cmd> [args...]\n  txpt run [options] -- <cmd> [args...]\n  txpt run [options] --shell '<shell command>'\n  txpt diff [TX_ID]\n  txpt undo [TX_ID] [--dry-run] [--force] [--json]\n  txpt list\n  txpt show [TX_ID]\n  txpt prune\n  txpt doctor\n  txpt inspect --json"
     );
 }
 

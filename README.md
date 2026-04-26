@@ -4,6 +4,7 @@
 
 ```sh
 txpt -- npm install zod
+txpt run --shell 'npm install zod > npm.log'
 txpt diff
 txpt undo
 txpt list
@@ -23,4 +24,3 @@ txpt inspect --json
 - external services, databases, containers, or network side effects
 
 See [SPEC.md](SPEC.md) for the product and rollback guarantee.
-
